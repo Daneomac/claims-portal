@@ -1,7 +1,9 @@
 version: 2
 
-# Weekly update PRs. Minor and patch updates are grouped into one PR per ecosystem and folder;
-# major updates arrive on their own so each one can be reviewed for breaking changes.
+# Weekly update PRs, minor and patch only, grouped into one PR per ecosystem and folder.
+# Major versions are ignored for the app dependencies and images: they need a deliberate
+# upgrade (e.g. Postgres 18 changes the data directory layout, odd Node releases are not LTS)
+# rather than a bot PR. GitHub Actions majors are still proposed; they rarely break builds.
 updates:
   - package-ecosystem: maven
     directory: /claims-api
@@ -10,6 +12,9 @@ updates:
     groups:
       maven-minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: maven
     directory: /notification-service
@@ -18,6 +23,9 @@ updates:
     groups:
       maven-minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: npm
     directory: /claims-web
@@ -26,6 +34,9 @@ updates:
     groups:
       npm-minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: npm
     directory: /e2e
@@ -34,6 +45,9 @@ updates:
     groups:
       npm-minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   # Base images in the three Dockerfiles
   - package-ecosystem: docker
@@ -46,6 +60,9 @@ updates:
     groups:
       docker-minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   # The images in docker-compose.yml (Postgres, RabbitMQ, Mailpit, Jaeger)
   - package-ecosystem: docker-compose
@@ -55,6 +72,9 @@ updates:
     groups:
       compose-minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
