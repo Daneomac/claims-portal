@@ -402,9 +402,11 @@ Each one ends green and committed; I review each commit before the next one star
   how this scales (more consumers on the queue, relay with SKIP LOCKED, partitioning); what's
   missing for production (section 8 notes, auth, monitoring/alerting, DLQ runbook).
 
-## 14. Open questions
+## 14. Schedule and decisions log
 
-- Submission deadline? (Decides whether the stretch items are realistic.)
-- Keep `Dev` as the default branch, or add `main` and work in feature branches + PRs? (PRs
-  with CI checks look good in a review.)
-- Cloud deployment: attempt a no-cost option, or explain the deployment approach instead.
+- **Deadline: Sunday 25 Oct 2026.** Target: milestones 1–9 done by Thu 22 Oct, leaving
+  Fri–Sat for stretch items, a dry-run of the demo and interview prep.
+- **Branching:** work directly on `Dev` (the default branch), one commit per milestone or
+  smaller.
+- **Plan accepted** as written on 17 Oct 2026.
+- Open: cloud deployment — decide after milestone 9 based on remaining time.

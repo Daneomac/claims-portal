@@ -1,0 +1,13 @@
+# Normalize to LF in the repo and working tree so shell scripts, mvnw and
+# Dockerfiles behave the same on Windows hosts and in Linux containers.
+* text=auto eol=lf
+
+# Windows-only scripts keep CRLF
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binary
+*.jar binary
+*.png binary
+*.jpg binary
+*.ico binary
