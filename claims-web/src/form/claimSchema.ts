@@ -18,7 +18,11 @@ const PHONE = /^(\+?1[ .-]?)?(\([2-9]\d{2}\)|[2-9]\d{2})[ .-]?[2-9]\d{2}[ .-]?\d
 const POLICY_NUMBER = /^RRM-\d{8}$/i
 const POSTAL_CODE = /^[ABCEGHJ-NPRSTVXY]\d[ABCEGHJ-NPRSTV-Z][ -]?\d[ABCEGHJ-NPRSTV-Z]\d$/i
 
-/** Characters as people count them (an emoji is one), matching Java's Size on code points. */
+/**
+ * Characters as people count them (an emoji is one). The server's @Size counts UTF-16 units,
+ * where most emoji count as two, so text heavy with emoji near the limit can pass here and be
+ * rejected by the server; its message then shows on the field.
+ */
 export function characterCount(text: string): number {
   return Array.from(text).length
 }

@@ -232,7 +232,7 @@ describe('claim schema', () => {
       ).toHaveProperty(['loss.description'], 'Description must be 2000 characters or fewer')
     })
 
-    it('counts an emoji as one character, as the server does', () => {
+    it('counts an emoji as one character', () => {
       expect(characterCount('a😀b')).toBe(3)
     })
   })
