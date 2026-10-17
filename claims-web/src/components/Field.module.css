@@ -1,0 +1,90 @@
+.field {
+  margin-bottom: 1.25rem;
+}
+
+.label {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-weight: 600;
+}
+
+.requiredMark {
+  color: var(--color-error);
+}
+
+.optional {
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+.hint {
+  margin: 0 0 0.375rem;
+  color: var(--color-text-muted);
+  font-size: 0.9375rem;
+}
+
+.error {
+  margin: 0 0 0.375rem;
+  color: var(--color-error);
+  font-weight: 600;
+  font-size: 0.9375rem;
+}
+
+.control {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 2px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+}
+
+textarea.control {
+  min-height: 9rem;
+  resize: vertical;
+}
+
+/* The red border is not the only signal: the error text names the problem too */
+.control[aria-invalid='true'] {
+  border-color: var(--color-error);
+}
+
+.counter {
+  margin: 0.25rem 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  text-align: right;
+}
+
+.checkbox {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.checkbox input {
+  flex: none;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin: 0.125rem 0 0;
+  accent-color: var(--color-primary);
+}
+
+.checkbox label {
+  cursor: pointer;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

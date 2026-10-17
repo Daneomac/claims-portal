@@ -350,9 +350,9 @@ tables.
   jane.doe@example.com — please check your email (and spam folder)", with a "Submit another
   claim" button.
 - **Form UX:** grouped `fieldset`s (About you · Your policy · What happened · Property
-  address), native date input with `max` = today, province select, character counter on the
-  description, submit button disabled while a request is in flight (prevents double
-  submissions).
+  address · Declaration), native date input with `min`/`max` from the 365-day window,
+  province select, character counter on the description, submit button disabled while a
+  request is in flight (prevents double submissions).
 - **Errors:** inline field errors on blur and on submit; an error summary at the top that takes
   focus on a failed submit; server-side `400` field errors mapped back onto their inputs;
   network/5xx errors shown as a retryable banner that keeps the entered data.
@@ -361,7 +361,33 @@ tables.
   styles, keyboard-only flow, and colour contrast meeting WCAG AA.
 - **Styling:** plain CSS modules, no UI library (small and easy to explain).
 - **API client:** a small typed `submitClaim()` wrapper around `fetch`, using relative `/api`
-  URLs. Vite's dev-server proxy and nginx in Compose both forward to claims-api.
+  URLs. Vite's dev-server proxy and nginx in Compose both forward to claims-api. It never
+  throws; it returns `success`, `field-errors` (a 400 with an `errors` array) or `failure`
+  (network error, 5xx, 429, a 400 with nothing to map, an unreadable body).
+
+How it's built (milestone 5):
+
+- **Form values have the API's shape.** `ClaimFormValues` mirrors the request JSON
+  (`policyholder.firstName`, `loss.date`, ...), with every input as text. So the server's
+  `field` paths are valid react-hook-form names and `setError(field, ...)` needs no mapping
+  table. `toRequest()` converts to the API body (amount to a number, empty optionals left out).
+- **One list of fields** (`form/fieldNames.ts`) gives the page order for the error summary and
+  decides which server errors have an input. A 400 whose fields aren't in the list shows the
+  retry banner instead.
+- **Dates are `YYYY-MM-DD` strings,** and "today" comes from `Intl` in `America/Winnipeg`, like
+  the server's `LossDateRule` (tested at 10 pm Winnipeg time, when UTC is already tomorrow).
+- **Validation timing:** `mode: 'onBlur'`, so a field is checked when left and everything on
+  submit; after a submit, fields re-check as they change. The summary appears only after a
+  submit attempt, and takes focus once per attempt (`submitCount`) so a blur error never steals
+  focus. react-hook-form's own focus-the-first-invalid-input is off (`shouldFocusError: false`);
+  left on, it won and the summary never got focus in a real browser.
+- **After success the form is unmounted,** so "Submit another claim" brings back a fresh form
+  without a manual reset.
+- **Server-side gaps the client works around:** the server rejects an empty-string phone with
+  the phone-format message and doesn't trim before validating, so the client trims and
+  omits empty optionals.
+- **Not done:** dark mode, translations (French), a polite live region for field errors beyond
+  the focus-moved summary.
 
 ## 8. Security and customer data
 
@@ -409,7 +435,8 @@ TDD for domain rules and the two use-case services; test-after for framework wir
 | Unit | notification-service | email contains the claim number and first name; masked policy; first name HTML-escaped; duplicate event skipped; SMTP failure propagates (for retry); unknown version → non-retryable; retry policy classification; recoverer; no PII in `toString()` |
 | Integration | notification-service + Testcontainers (Postgres, RabbitMQ, Mailpit) | publish event → email in Mailpit containing the claim number; same event twice → one email; concurrent duplicate waits on the primary key, then skips; unknown version / non-JSON body → DLQ without retries; SMTP down → 4 attempts → DLQ, nothing recorded; no PII in the logs; `/actuator/prometheus` has the counters |
 | Architecture | both, ArchUnit | layer dependency rules; `domain` has no Spring/JPA imports |
-| Component | claims-web, Vitest + RTL + MSW | required-field errors; date-in-future error; successful submit shows the claim number and focuses the confirmation; server 400 maps to fields; 500 shows the banner and keeps the data |
+| Component | claims-web, Vitest + RTL + MSW | required-field errors with the summary focused; date-in-future, bad policy number, short description and bad postal code; successful submit shows the claim number and focuses the confirmation, and sends the API's JSON shape; the button is disabled while pending; server 400 maps to fields; 500 and network errors show the banner and keep the data (and Try again works) |
+| Unit | claims-web | zod schema boundaries (365/366 days, 19/20 and 2000/2001 characters, amount limits, postal and policy formats, all 13 provinces); Winnipeg "today"; `submitClaim()` outcomes |
 | End-to-end | e2e/, Playwright vs Compose | fill the form in a real browser → confirmation shows a claim number → Mailpit API has an email to that address containing **the same** claim number |
 
 The end-to-end test is the automated version of the interview demo.
