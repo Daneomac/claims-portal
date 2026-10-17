@@ -1,0 +1,10 @@
+# Keep the build context small and keep secrets and local build output out of the image.
+target/
+.idea/
+*.iml
+.git/
+.env
+.env.*
+Dockerfile
+.dockerignore
+*.log

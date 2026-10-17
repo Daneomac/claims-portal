@@ -1,0 +1,11 @@
+# Keep the build context small; node_modules and dist are rebuilt inside the image.
+node_modules/
+dist/
+coverage/
+.git/
+.env
+.env.*
+*.local
+*.log
+Dockerfile
+.dockerignore

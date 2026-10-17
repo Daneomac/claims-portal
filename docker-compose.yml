@@ -1,10 +1,14 @@
-# Local stack for the claims portal.
+# Local stack for the claims portal: supporting infrastructure plus the three apps.
 #
-#   cp .env.example .env        # first time only
-#   docker compose up -d --wait
+#   cp .env.example .env              # first time only
+#   docker compose up --build -d --wait
+#   -> http://localhost:3000          # the claim form
 #
-# Milestone 1: supporting infrastructure only. The application services are
-# added in milestone 6.
+# Start order is enforced with healthchecks: postgres/rabbitmq/mailpit first, then
+# claims-api and notification-service, then claims-web (nginx). `--wait` returns
+# once everything is healthy. Secrets come from .env (git-ignored); compose refuses
+# to start if one is missing. Stop with `docker compose down` (add `-v` to also
+# delete the database and broker data).
 
 name: claims-portal
 
@@ -57,6 +61,72 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  claims-api:
+    build: ./claims-api
+    environment:
+      DB_HOST: postgres
+      RABBITMQ_HOST: rabbitmq
+      CLAIMS_DB_PASSWORD: ${CLAIMS_DB_PASSWORD:?set in .env (see .env.example)}
+      RABBITMQ_USER: ${RABBITMQ_USER:?set in .env (see .env.example)}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?set in .env (see .env.example)}
+    ports:
+      - "8080:8080"     # also reachable directly for curl demos; the web app uses it via nginx
+    mem_limit: 768m     # the JVM sizes its heap from this (-XX:MaxRAMPercentage in the Dockerfile)
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/actuator/health/readiness"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 40s
+    restart: unless-stopped
+
+  notification-service:
+    build: ./notification-service
+    environment:
+      DB_HOST: postgres
+      RABBITMQ_HOST: rabbitmq
+      SMTP_HOST: mailpit
+      NOTIFICATIONS_DB_PASSWORD: ${NOTIFICATIONS_DB_PASSWORD:?set in .env (see .env.example)}
+      RABBITMQ_USER: ${RABBITMQ_USER:?set in .env (see .env.example)}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?set in .env (see .env.example)}
+    ports:
+      - "8081:8081"     # actuator only (health, metrics)
+    mem_limit: 768m
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      mailpit:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8081/actuator/health/readiness"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 40s
+    restart: unless-stopped
+
+  claims-web:
+    build: ./claims-web
+    ports:
+      - "3000:8080"     # nginx listens on 8080 inside the container (non-root can't use 80)
+    depends_on:
+      claims-api:
+        condition: service_healthy
+    healthcheck:
+      # 127.0.0.1, not localhost: BusyBox wget tries IPv6 ::1 first and nginx listens on IPv4 only
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
 
 volumes:
   postgres-data:

@@ -29,7 +29,7 @@ system, file uploads, claim status tracking, admin UI.
 | Database | PostgreSQL + Flyway migrations | 17 |
 | Message broker | RabbitMQ (with management plugin) | 4.x |
 | Email | Mailpit (SMTP capture + web inbox + REST API) | latest pinned tag |
-| Web server | nginx serving the built SPA and reverse-proxying `/api` | stable-alpine |
+| Web server | nginx (unprivileged image) serving the built SPA and reverse-proxying `/api` | 1.30-alpine |
 | Containers | Docker Compose | v5 |
 | Backend tests | JUnit 5, Mockito, AssertJ, Testcontainers, ArchUnit | — |
 | Frontend tests | Vitest, React Testing Library, MSW | Vitest 5 |
@@ -389,6 +389,45 @@ How it's built (milestone 5):
 - **Not done:** dark mode, translations (French), a polite live region for field errors beyond
   the focus-moved summary.
 
+## 7a. Containers (milestone 6)
+
+`docker compose up --build -d --wait` builds and runs everything.
+
+- **Java images** (`claims-api/Dockerfile`, `notification-service/Dockerfile`): two stages.
+  The build stage (`eclipse-temurin:25-jdk`) runs `mvnw dependency:go-offline` in its own layer,
+  then `package -DskipTests` (CI runs the tests), then `java -Djarmode=tools -jar app.jar
+  extract --layers`, the Boot 3.3+/4 syntax. The runtime stage copies the four layers
+  (dependencies, loader, snapshot dependencies, application) so a code-only change rebuilds one
+  small layer. It runs as a fixed non-root user (uid 10001) with
+  `-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError`, and compose sets `mem_limit: 768m`
+  so the heap is sized from the container, not the host. `java` is PID 1 (exec-form
+  `ENTRYPOINT`), so it gets SIGTERM and shuts down gracefully.
+- **Deviation: Alpine JRE.** The runtime image is `eclipse-temurin:25-jre-alpine`, not
+  `25-jre`. The Ubuntu JRE image has neither curl nor wget, so the readiness healthcheck would
+  have needed an extra package (more surface, more size). The Alpine image has BusyBox `wget`
+  and is about 175 MB smaller. Build stays on the Ubuntu JDK image.
+- **Web image:** `node:24-alpine` runs `npm ci` and `npm run build`; the result is served by
+  `nginxinc/nginx-unprivileged:1.30-alpine` (uid 101) on port 8080, published as 3000.
+- **nginx.conf** (replaces `conf.d/default.conf`): SPA fallback to `index.html`; `/assets/`
+  (hashed file names) cached for a year and `index.html` revalidated (`expires`, not
+  `add_header`, so the security headers aren't dropped by location-level inheritance);
+  `/api/` proxied to `claims-api:8080` with `X-Forwarded-*` headers; `/actuator` answers 404
+  (otherwise the SPA fallback would answer it with `index.html`); `client_max_body_size 16k`;
+  `limit_req` 5 requests/s per IP with a burst of 10, returning 429; gzip; `server_tokens off`;
+  CSP (`default-src 'self'`, no inline script or style, `frame-ancestors 'none'`, `object-src
+  'none'`), `nosniff`, `Referrer-Policy`, `X-Frame-Options`, `Permissions-Policy`. HSTS is left
+  to the TLS edge in a real deployment.
+- **Upstream DNS:** `proxy_pass` uses a variable with Docker's resolver (`127.0.0.11`), so
+  nginx looks up `claims-api` per request. It then survives the API container being recreated,
+  and can start before the API is up.
+- **Compose:** each app gets its settings from environment variables (`DB_HOST=postgres`,
+  `RABBITMQ_HOST=rabbitmq`, `SMTP_HOST=mailpit`) and its secrets from `.env` through `${VAR:?}`.
+  `depends_on: condition: service_healthy` orders startup; healthchecks use
+  `/actuator/health/readiness` (and nginx's own `/healthz` for the web container, on
+  `127.0.0.1` because BusyBox `wget` tries IPv6 first for `localhost` and nginx listens on
+  IPv4 only). Healthchecks live in compose rather than the Dockerfiles so the whole startup
+  contract is in one file. `restart: unless-stopped` on the apps.
+
 ## 8. Security and customer data
 
 | Area | Measure |
@@ -399,8 +438,8 @@ How it's built (milestone 5):
 | Input | Validation + length limits on every field; JPA parameter binding; nginx `client_max_body_size 16k` |
 | Output | React and Thymeleaf escape by default. `ProblemDetail` responses never include stack traces |
 | Abuse | nginx `limit_req` on `/api` (per-IP rate limit) |
-| Headers | nginx sets CSP, `X-Content-Type-Options`, `Referrer-Policy`, `frame-ancestors 'none'` |
-| Containers | JRE-only / alpine images, non-root user, actuator not routed through nginx |
+| Headers | nginx sets CSP (including `frame-ancestors 'none'`), `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy` |
+| Containers | JRE-only / alpine images, non-root users (uid 10001 for the Java apps, nginx uid 101), JVM sized from the container memory limit, actuator not routed through nginx (404), `.dockerignore` keeps `.env` and build output out of images |
 | Supply chain | Dependabot for Maven, npm, Docker images and Actions |
 | Production notes | Customer authentication, TLS everywhere, secrets manager, encryption at rest, data retention policy, CAPTCHA, policy verification |
 
