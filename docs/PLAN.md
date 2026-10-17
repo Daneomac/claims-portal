@@ -456,8 +456,12 @@ How it's built (milestone 5):
 
 ## 9. Observability
 
-- **Health:** Actuator liveness/readiness, including DB and RabbitMQ indicators. Compose
-  `healthcheck`s plus `depends_on: condition: service_healthy`, so services start in order.
+- **Health:** `/actuator/health` includes the DB and RabbitMQ indicators (and mail in
+  notification-service). The liveness and readiness probes (`/actuator/health/liveness`,
+  `/readiness`) report only the application's own state, so an outage of a dependency doesn't
+  mark the containers unhealthy: claims-api keeps accepting claims while RabbitMQ is down.
+  Compose `healthcheck`s probe readiness, plus `depends_on: condition: service_healthy`, so
+  services start in order.
 - **Structured logs:** Spring Boot's built-in structured logging. Compose sets
   `LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs`, so the containers write one JSON object per line in
   the Elastic Common Schema; IDE and test runs keep Spring's readable format. ECS rather than
@@ -479,7 +483,7 @@ How it's built (milestone 5):
   the trace context is saved with the event and restored when it's published
   (`OutboxTracing`):
   1. `JpaEventOutbox.append` runs inside the request's span. It writes that context as a W3C
-     `traceparent` (`00-<trace ID>-<span ID>-01`) into `outbox_event.trace_parent`, in the
+     `traceparent` (`00-<trace ID>-<span ID>-<flags>`) into `outbox_event.trace_parent`, in the
      same transaction as the claim.
   2. For each row, `OutboxRelay` starts an `outbox publish` span whose parent is the saved
      context, and makes it current while it sends. The `RabbitTemplate`'s send span is a child
