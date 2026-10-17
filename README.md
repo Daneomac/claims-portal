@@ -15,22 +15,34 @@ component and end-to-end tests that also run in GitHub Actions.
 
 ## Requirements and where they are met
 
-| What was asked | Where it is met |
+The challenge's scope table, in its own order. The first column's tag is the challenge's.
+
+| Area | Where it is met |
 |---|---|
-| Web form to submit a home insurance claim | [`claims-web/`](claims-web): React + TypeScript + Vite, grouped fields, inline errors and an error summary, accessible (WCAG-minded, axe-checked), confirmation with the claim number |
-| API that validates the claim and stores it with a unique claim number | [`claims-api/`](claims-api): `POST /api/v1/claims`, Bean Validation plus domain rules, Flyway + PostgreSQL, claim numbers like `HC-2026-000123` from a database sequence ([PLAN §4](docs/PLAN.md#4-claims-api)) |
-| Publish a "claim submitted" event to a message queue | Transactional outbox and relay with publisher confirms, to RabbitMQ ([ADR 0001](docs/adr/0001-rabbitmq-message-broker.md), [0002](docs/adr/0002-transactional-outbox.md)); contract in [docs/events.md](docs/events.md) |
-| A separate service subscribes and emails the customer their claim number | [`notification-service/`](notification-service): its own Spring Boot app and database, Thymeleaf HTML + text email sent over SMTP to Mailpit |
-| Handles failure and duplicates | Idempotent consumer ([ADR 0003](docs/adr/0003-at-least-once-idempotent-consumer.md)); bounded retries, then a dead-letter queue and replay ([ADR 0004](docs/adr/0004-retry-and-dead-letter.md)); demo steps 7 and 8 |
-| Automated tests, and how to run them | [Running the tests](#running-the-tests): about 250 tests across four levels, plus CI |
-| Containers and local orchestration | Dockerfiles for the three apps, [`docker-compose.yml`](docker-compose.yml) for the whole stack ([Containers](#containers-and-local-orchestration)) |
-| Prerequisites, build, run and demo instructions | [Prerequisites](#prerequisites), [Quick start](#quick-start), [Demo script](#demo-script) |
-| Architecture overview | [Architecture](#architecture) here, the detail in [docs/PLAN.md](docs/PLAN.md) |
-| AI-assisted development statement | [AI-assisted development](#ai-assisted-development) |
-| *Optional:* CI pipeline | [`.github/workflows/ci.yml`](.github/workflows/ci.yml): four jobs, including the end-to-end tests against the Compose stack; Dependabot for dependencies |
-| *Optional:* observability | One trace per claim across both services and the broker (Jaeger), ECS JSON logs with trace IDs, Prometheus metrics, health probes ([PLAN §9](docs/PLAN.md#9-observability)) |
-| *Optional:* security and handling of customer data | [Security and customer data](#security-and-customer-data) |
-| *Optional:* documented design decisions | Six ADRs in [`docs/adr/`](docs/adr/README.md) |
+| **Web application** (required): a customer form with input validation and a clear confirmation | [`claims-web/`](claims-web): React + TypeScript + Vite. Collects name, email and phone, policy number, date and type of loss, a description, and the property address. Inline errors plus an error summary, and a "Claim received" confirmation that shows the claim number and tells the customer to check their email. Accessibility is tested with axe. No file upload (optional in the challenge, not built) |
+| **Backend API** (required): validate, process, unique claim number | [`claims-api/`](claims-api): `POST /api/v1/claims`, Bean Validation plus domain rules, claim numbers like `HC-2026-000123` from a database sequence ([PLAN §4](docs/PLAN.md#4-claims-api)) |
+| **Asynchronous event flow** (required): publish Claim Submitted; a separate subscriber handles it | Transactional outbox and relay publish to RabbitMQ ([ADR 0001](docs/adr/0001-rabbitmq-message-broker.md), [0002](docs/adr/0002-transactional-outbox.md)); [`notification-service/`](notification-service) is a separate app with its own database. Contract: [docs/events.md](docs/events.md) |
+| **Email notification** (required): the consumer generates and sends the email, with the claim number | notification-service renders Thymeleaf HTML and text and sends them over SMTP to Mailpit. The claims API never sends email. Demo step 4 |
+| **Automated tests** (required) | [Running the tests](#running-the-tests): about 250 tests across unit, integration, contract, component and end-to-end levels |
+| **Containerization** (required) | Dockerfiles for the three apps and [`docker-compose.yml`](docker-compose.yml) with every supporting component ([Containers](#containers-and-local-orchestration)) |
+| **Persistence** (required) | PostgreSQL 17 with Flyway migrations; one database per service |
+| **CI/CD** (optional) | [`.github/workflows/ci.yml`](.github/workflows/ci.yml): build and test both services and the web app, then the end-to-end tests against the Compose stack. Dependabot for updates. **Packaging and deployment are not done:** CI doesn't publish images |
+| **Cloud deployment** (optional) | **Not done.** The stack runs locally with Compose only. How it would be deployed is in [Deploying it](#deploying-it) |
+| **Observability** (optional) | Health and readiness probes, ECS JSON logs with trace IDs, Prometheus metrics, and one trace per claim across both services and the broker in Jaeger ([PLAN §9](docs/PLAN.md#9-observability)). No dashboards: nothing scrapes the metrics yet |
+
+**Optional enhancements:** retries, dead-letter handling and idempotency are built and demonstrated
+(demo steps 7 and 8, [ADR 0003](docs/adr/0003-at-least-once-idempotent-consumer.md),
+[0004](docs/adr/0004-retry-and-dead-letter.md)); integration and end-to-end tests are included; and
+there is accessibility work on the form.
+
+**Deliverables:** the code is in this repository; prerequisites, build, run, test and demo
+instructions are in [Prerequisites](#prerequisites) to [Running the tests](#running-the-tests);
+the architecture overview is [below](#architecture); the container setup is
+[Containers and local orchestration](#containers-and-local-orchestration); the AI statement is
+[at the end](#ai-assisted-development). The challenge also asks for the design to be
+defensible: [Key design decisions](#key-design-decisions-and-trade-offs),
+[Security and customer data](#security-and-customer-data) and
+[What I'd add for production](#what-id-add-for-production) cover that.
 
 ## Architecture
 
@@ -400,10 +412,27 @@ real environment):
   strip or re-validate an incoming `traceparent` at the edge so the public can't choose trace IDs.
 - **Contracts and compatibility:** consumer-driven contract tests (Pact) or a schema registry
   instead of two fixture files kept in step by hand.
-- **Delivery:** image publishing to a registry, deployment manifests, environments, and a load and
-  failure-injection test for the whole pipeline.
+- **Delivery:** image publishing to a registry, deployment (see [Deploying it](#deploying-it)),
+  environments, and a load and failure-injection test for the whole pipeline.
 - **Product details:** the claim number sequence doesn't reset each year and numbers are guessable;
   French and other translations; dark mode; claim attachments (photos).
+
+## Deploying it
+
+I didn't deploy this to a cloud environment; it's a local, Compose-based stack. The apps are
+already built the way a deployment needs them: stateless containers configured through environment
+variables, with readiness probes and graceful shutdown. A no-cost route would be:
+
+- build the three images in CI and push them to GitHub Container Registry;
+- run `claims-web`, `claims-api` and `notification-service` on a free container host;
+- use a managed free-tier PostgreSQL (two databases or schemas) and a hosted RabbitMQ (for
+  example a free CloudAMQP plan), set through the same environment variables;
+- replace Mailpit with a transactional email provider's free tier, behind the existing
+  `EmailSender` port, and send traces to a hosted collector or leave Jaeger out;
+- keep secrets in the host's secrets store, and put TLS in front of nginx.
+
+None of that has been tried, so I'd expect small surprises (connection limits, TLS to the broker,
+memory limits on free tiers) rather than design changes.
 
 ## Repository layout
 
