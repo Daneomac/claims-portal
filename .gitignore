@@ -1,0 +1,22 @@
+# Secrets / local config
+.env
+*.local
+
+# Java / Maven
+target/
+*.class
+*.log
+hs_err_pid*
+
+# Node / Vite
+node_modules/
+dist/
+coverage/
+
+# IDE / OS
+.idea/
+*.iml
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
