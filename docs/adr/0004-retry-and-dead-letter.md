@@ -28,8 +28,11 @@ dropping messages loses customer confirmations.
   both `MessageConversionException` types. The policy matches an excluded type anywhere in
   the cause chain. That matters because the container wraps whatever the listener throws.
 - Giving up: Boot passes our `MessageRecoverer` bean to the interceptor. Spring's default
-  (`RejectAndDontRequeueRecoverer`) logs the whole message, body included, which would put
-  the customer's name and email in the logs. Our `DeadLetterRecoverer` counts the failure,
+  (`RejectAndDontRequeueRecoverer`) logs the failure with its full stack trace and passes it on
+  as the cause, so the container logs it again. Exception messages can contain personal
+  information: an SMTP error can quote the recipient's address, and a JSON error can quote the
+  input. (It also logs the message, but `Message.toString()` only prints a JSON body of 50 bytes
+  or less, so an event's body isn't printed.) Our `DeadLetterRecoverer` counts the failure,
   logs the event ID and exception type only, and throws a cause-less
   `AmqpRejectAndDontRequeueException`.
 - The queue sets `x-dead-letter-exchange: notification.dlx` and an explicit

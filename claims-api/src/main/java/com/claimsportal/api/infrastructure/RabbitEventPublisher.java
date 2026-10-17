@@ -94,7 +94,8 @@ class RabbitEventPublisher implements EventPublisher {
         }
         ReturnedMessage returned = correlation.getReturned();
         if (returned != null) {
-            // Only the reply code and text: ReturnedMessage.toString() would include the body
+            // Only the reply code and text: ReturnedMessage.toString() includes the message, and
+            // Message.toString() prints short JSON bodies (up to 50 bytes) in full
             throw new EventPublishException("The broker returned the message as unroutable: "
                     + returned.getReplyCode() + " " + returned.getReplyText());
         }

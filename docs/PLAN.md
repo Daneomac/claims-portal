@@ -344,9 +344,11 @@ How this is configured in Boot 4.1 / Spring AMQP 4.1 (checked in milestone 4):
   `AmqpRejectAndDontRequeueException` (the base of `UnprocessableEventException`) and both
   `MessageConversionException` types.
 - When the interceptor gives up, Boot calls the `MessageRecoverer` bean. The default
-  `RejectAndDontRequeueRecoverer` logs the whole message, **body included** (name and email),
-  so `DeadLetterRecoverer` replaces it: it increments `notifications.failed`, logs the event ID
-  and the exception type only, and throws a cause-less `AmqpRejectAndDontRequeueException`.
+  `RejectAndDontRequeueRecoverer` logs the failure's full stack trace and rethrows it as a cause,
+  and exception messages can carry personal data (an SMTP error can quote the recipient's
+  address). It doesn't print an event's body: `Message.toString()` only includes JSON bodies up
+  to 50 bytes. `DeadLetterRecoverer` replaces it: it increments `notifications.failed`, logs the
+  event ID and the exception type only, and throws a cause-less `AmqpRejectAndDontRequeueException`.
 - In tests, `application-test.yml` shortens the back-off to 100 ms / 200 ms / 400 ms.
 
 The notification service has its own `notifications` database, so services don't share

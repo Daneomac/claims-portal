@@ -376,7 +376,7 @@ The reasoning, alternatives and consequences are in the [ADRs](docs/adr/README.m
 | Area | What is done |
 |---|---|
 | Secrets | None in the repo; see [Configuration](#configuration-and-secrets). Per-service database logins |
-| Personal data in logs | Logs carry claim numbers, event IDs and trace IDs only. Request and event records override `toString()` to redact names and emails, and tests assert it. Spring AMQP's default recoverer would log whole message bodies, so a custom one replaces it ([ADR 0004](docs/adr/0004-retry-and-dead-letter.md)) |
+| Personal data in logs | Logs carry claim numbers, event IDs and trace IDs only. Request and event records override `toString()` to redact names and emails, and tests assert it. Spring AMQP's default recoverer logs the full exception, whose message can quote the customer's email address (an SMTP rejection, for example), so a custom one that logs only the event ID and exception type replaces it ([ADR 0004](docs/adr/0004-retry-and-dead-letter.md)) |
 | Personal data elsewhere | The event carries only what the email needs. The email masks the policy number and omits the damage description. Error responses never include stack traces, only a trace ID |
 | Input | Every field is validated with length limits; JPA parameter binding; nginx caps request bodies at 16 KB |
 | Output | React and Thymeleaf escape by default (a test covers an HTML-escaped first name) |

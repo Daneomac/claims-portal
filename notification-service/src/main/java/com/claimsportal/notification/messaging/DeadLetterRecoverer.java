@@ -15,9 +15,13 @@ import org.springframework.core.NestedExceptionUtils;
  * without requeueing it, so the broker routes it to the dead-letter queue (ADR 0004).
  *
  * <p>Spring AMQP's own {@code RejectAndDontRequeueRecoverer} does the same rejection, but
- * logs the whole message, body included, and the body holds the customer's name and email.
- * This one logs the message ID (the event ID) only. The exception it throws has no cause, so
- * the container's own warning doesn't print the original error's message either.
+ * logs the failure's full stack trace, whose messages can hold personal information (an SMTP
+ * error can quote the recipient's address, a JSON error can quote the input), and passes the
+ * failure on as the cause of its exception, so the container logs it again. It also logs
+ * {@code Message.toString()}, which prints a JSON body only up to 50 bytes
+ * ({@code Message.setMaxBodyLength}); an event is longer, so the body itself isn't printed.
+ * This one logs the message ID (the event ID) and the exception type only, and the exception
+ * it throws has no cause, so the container's own warning doesn't print the original error either.
  */
 class DeadLetterRecoverer implements MessageRecoverer {
 
