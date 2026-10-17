@@ -117,23 +117,27 @@ Java base packages: `com.claimsportal.api` and `com.claimsportal.notification`.
 
 | Package | Contents | May depend on |
 |---|---|---|
-| `web` | `ClaimController`, request/response records, `ApiExceptionHandler` | `application` |
-| `application` | `ClaimSubmissionService`, `SubmitClaimCommand`, ports: `ClaimNumberGenerator`, `EventOutbox` | `domain` |
-| `domain` | `Claim`, `LossType`, `Province`, `Address`, `Policyholder`, `ClaimSubmitted` event | nothing (plain Java) |
-| `infrastructure` | JPA repositories/entities, `SequenceClaimNumberGenerator`, `JpaEventOutbox`, `OutboxRelay`, `RabbitEventPublisher`, RabbitMQ config | `application`, `domain` |
+| `web` | `ClaimController`, request/response records, `ApiExceptionHandler` | `application`, `domain` (value types and `InvalidClaimException`) |
+| `application` | `ClaimSubmissionService`, `SubmitClaimCommand`, ports: `ClaimNumberGenerator`, `ClaimRepository`, `EventOutbox` | `domain` |
+| `domain` | `Claim`, `ClaimNumber`, `Loss`, `LossType`, `Province`, `Address`, `Policyholder`, `LossDateRule`, `ClaimSubmitted` event | nothing (plain Java) |
+| `infrastructure` | JPA entities and repositories, `SequenceClaimNumberGenerator`, `JpaEventOutbox`, `OutboxRelay`, `RabbitEventPublisher`, RabbitMQ config | `application`, `domain` |
 
 The use case in one transaction:
 
 ```java
 @Transactional
-public SubmittedClaim submit(SubmitClaimCommand cmd) {
-    var claimNumber = claimNumberGenerator.next();
-    var claim = Claim.submit(claimNumber, cmd, clock);   // domain rules live here
+public SubmittedClaim submit(SubmitClaimCommand command) {
+    Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
+    Claim claim = Claim.submit(claimNumberGenerator.next(), command.policyNumber(), command.policyholder(),
+            command.loss(), command.propertyAddress(), now, lossDateRule);   // domain rules live here
     claims.save(claim);
-    outbox.append(ClaimSubmitted.from(claim, clock));     // same transaction as the claim
+    outbox.append(ClaimSubmitted.from(claim, now));   // same transaction as the claim
     return SubmittedClaim.from(claim);
 }
 ```
+
+The domain never reads a clock: the service passes in the submission instant, and
+`LossDateRule` works out "today" from it in `America/Winnipeg`.
 
 ### REST API
 

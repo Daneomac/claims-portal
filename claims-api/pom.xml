@@ -15,6 +15,7 @@
     <description>Claim submission API</description>
     <properties>
         <java.version>25</java.version>
+        <archunit.version>1.5.1</archunit.version>
         <!-- Base for surefire's argLine; tools like JaCoCo append to it -->
         <argLine></argLine>
     </properties>
@@ -101,6 +102,12 @@
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>testcontainers-rabbitmq</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+            <version>${archunit.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
