@@ -263,8 +263,13 @@ PII. Compatibility rule: additive changes keep v1; breaking changes publish v2 a
 | Object | Type | Declared by |
 |---|---|---|
 | `claims.events` | durable topic exchange | claims-api (the producer owns its exchange) |
-| `notification.claim-submitted` | durable queue, binding key `claim.submitted`, DLX = `notification.dlx` | notification-service (the consumer owns its queue) |
-| `notification.dlx` → `notification.claim-submitted.dlq` | direct exchange + durable queue | notification-service |
+| `notification.claim-submitted` | durable queue, binding key `claim.submitted`, DLX = `notification.dlx`, dead-letter routing key `notification.claim-submitted.dlq` | notification-service (the consumer owns its queue) |
+| `notification.dlx` → `notification.claim-submitted.dlq` | direct exchange + durable queue, bound with the queue's name | notification-service |
+
+notification-service also declares `claims.events` with the same settings, so it can start
+before claims-api has ever run (declaring an existing exchange with matching settings is a
+no-op). The explicit dead-letter routing key keeps the DLQ binding independent of the
+producer's routing keys.
 
 ## 6. notification-service
 
@@ -272,23 +277,34 @@ PII. Compatibility rule: additive changes keep v1; breaking changes publish v2 a
 
 | Package | Contents |
 |---|---|
-| `messaging` | `ClaimSubmittedListener` (`@RabbitListener`), event records, topology config |
-| `application` | `ClaimConfirmationService`, port `EmailSender`, `ConfirmationEmail` model |
-| `email` | `SmtpEmailSender` (`JavaMailSender`), `ConfirmationEmailRenderer` (Thymeleaf HTML + plain text) |
-| `persistence` | `ProcessedEventRepository` (`processed_event`: `event_id` PK, `claim_number`, `processed_at`) |
+| `messaging` | `ClaimSubmittedListener` (`@RabbitListener`), `ClaimSubmittedEvent` (tolerant-reader records), `UnprocessableEventException`, `DeadLetterRecoverer`, `MessagingConfiguration` (topology, JSON converter, retry rules) |
+| `application` | `ClaimConfirmationService`, port `EmailSender`, `ConfirmationEmail` model (policy number already masked) |
+| `email` | `SmtpEmailSender` (`JavaMailSender`, multipart text + HTML), `ConfirmationEmailRenderer`, `EmailConfiguration` (Thymeleaf engine with an HTML and a TEXT resolver), `EmailProperties` (`notifications.email.from`) |
+| `persistence` | `ProcessedEvent` entity, `ProcessedEventRepository` (`processed_event`: `event_id` PK, `claim_number`, `processed_at`) |
+
+Dependencies: `messaging` → `application` → `persistence`; `email` implements the
+`application` port. Checked by an ArchUnit test.
 
 ### Processing a message
 
 ```
+check eventType / eventVersion, validate ── unsupported or invalid? → straight to the DLQ
 begin tx
-  insert processed_event(event_id)      ── duplicate key? → already handled: ack and skip
+  insert processed_event(event_id)      ── ON CONFLICT DO NOTHING: 0 rows? → already handled: ack and skip
   render email (HTML + text)            ── first name escaped by Thymeleaf
   send via SMTP                         ── throws? → tx rolls back → retry (ADR 0004)
 commit → ack
 ```
 
-- A concurrent duplicate blocks on the primary key until the first transaction commits, then
-  sees the conflict and skips.
+- The insert *is* the duplicate check. `INSERT … ON CONFLICT (event_id) DO NOTHING` reports a
+  duplicate as "0 rows" without an error. Check-then-insert would let two concurrent
+  deliveries both send; insert-and-catch-the-exception would leave a Postgres transaction
+  that's aborted and marked rollback-only.
+- A concurrent duplicate blocks on the primary key until the first transaction ends. If it
+  committed, the duplicate skips; if it rolled back (send failed), the duplicate sends instead.
+  An integration test holds one send open to show this.
+- Retries happen outside the transaction (each attempt is a new one), so no database
+  connection is held during the back-off.
 - Remaining gap: if the process dies after the SMTP send but before the commit, the
   redelivered message sends a second email. Email can't take part in a DB transaction, so this
   is the accepted at-least-once trade-off (documented in ADR 0003).
@@ -306,8 +322,23 @@ Spring AMQP listener retry: 4 attempts with exponential back-off (1 s → 2 s �
 (unparseable JSON, unknown `eventVersion`, invalid payload) go **straight** to the DLQ. Prefetch
 is 10. Ops can inspect and replay the DLQ from the RabbitMQ management UI.
 
-*(Verify in milestone 4: Boot 4 / Spring AMQP 4 retry configuration, now that Spring Retry has
-moved to Spring Framework's core retry support.)*
+How this is configured in Boot 4.1 / Spring AMQP 4.1 (checked in milestone 4):
+
+- The retry interceptor is built on Spring Framework 7's core retry (`org.springframework.core.retry`);
+  Spring Retry isn't on the classpath. The properties are still
+  `spring.rabbitmq.listener.simple.retry.*`, but **`max-attempts` was replaced by
+  `max-retries`** (retries after the first attempt), so 4 attempts is `max-retries: 3`.
+  The back-off is `initial-interval` / `multiplier` / `max-interval`.
+- Non-retryable exceptions are excluded with a `RabbitListenerRetrySettingsCustomizer` bean
+  (`RetryPolicySettings.setExceptionExcludes`). The policy also matches causes, which matters
+  because the container wraps everything in a `ListenerExecutionFailedException`. Excluded:
+  `AmqpRejectAndDontRequeueException` (the base of `UnprocessableEventException`) and both
+  `MessageConversionException` types.
+- When the interceptor gives up, Boot calls the `MessageRecoverer` bean. The default
+  `RejectAndDontRequeueRecoverer` logs the whole message, **body included** (name and email),
+  so `DeadLetterRecoverer` replaces it: it increments `notifications.failed`, logs the event ID
+  and the exception type only, and throws a cause-less `AmqpRejectAndDontRequeueException`.
+- In tests, `application-test.yml` shortens the back-off to 100 ms / 200 ms / 400 ms.
 
 The notification service has its own `notifications` database, so services don't share
 tables.
@@ -358,7 +389,7 @@ tables.
   outbox and the broker, into the notification logs**. No collector is needed to show this in
   logs. *(stretch: OTLP → Jaeger container for a visual trace)*
 - **Metrics:** `/actuator/prometheus` with counters `claims.submitted`,
-  `notifications.sent`, `notifications.failed`, `notifications.duplicates_skipped` and a gauge
+  `notifications.sent`, `notifications.failed` (events dead-lettered), `notifications.duplicates_skipped` and a gauge
   `outbox.pending`. *(stretch: Prometheus + Grafana in Compose)*
 
 Note: the outbox relay runs on a scheduler, so the trace context is saved in the outbox row
@@ -375,8 +406,8 @@ TDD for domain rules and the two use-case services; test-after for framework wir
 | Web slice | claims-api `@WebMvcTest` | 201 + body on valid input; 400 `ProblemDetail` with field paths; malformed JSON → 400; no PII in logs |
 | Integration | claims-api + Testcontainers (Postgres, RabbitMQ) | submit → row in `claim` + `outbox_event` → relay publishes → message on a test queue with the right properties; broker down (container paused) → row stays pending, then publishes after recovery; nothing bound → returned, stays pending |
 | Contract (producer) | claims-api | published body matches `src/test/resources/contracts/claim-submitted-v1.json`; the notification service's tests parse a copy of that file (ADR 0005) |
-| Unit | notification-service | email contains the claim number and first name; masked policy; duplicate event skipped; SMTP failure propagates (for retry); unknown version → non-retryable |
-| Integration | notification-service + Testcontainers (Postgres, RabbitMQ, Mailpit) | publish event → email in Mailpit containing the claim number; same event twice → one email; SMTP down → retries → DLQ |
+| Unit | notification-service | email contains the claim number and first name; masked policy; first name HTML-escaped; duplicate event skipped; SMTP failure propagates (for retry); unknown version → non-retryable; retry policy classification; recoverer; no PII in `toString()` |
+| Integration | notification-service + Testcontainers (Postgres, RabbitMQ, Mailpit) | publish event → email in Mailpit containing the claim number; same event twice → one email; concurrent duplicate waits on the primary key, then skips; unknown version / non-JSON body → DLQ without retries; SMTP down → 4 attempts → DLQ, nothing recorded; no PII in the logs; `/actuator/prometheus` has the counters |
 | Architecture | both, ArchUnit | layer dependency rules; `domain` has no Spring/JPA imports |
 | Component | claims-web, Vitest + RTL + MSW | required-field errors; date-in-future error; successful submit shows the claim number and focuses the confirmation; server 400 maps to fields; 500 shows the banner and keeps the data |
 | End-to-end | e2e/, Playwright vs Compose | fill the form in a real browser → confirmation shows a claim number → Mailpit API has an email to that address containing **the same** claim number |

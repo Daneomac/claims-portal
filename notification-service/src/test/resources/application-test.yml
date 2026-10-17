@@ -1,0 +1,9 @@
+# Integration tests: the same retry policy as application.yml with much shorter waits,
+# so the dead-letter tests finish in about a second.
+spring:
+  rabbitmq:
+    listener:
+      simple:
+        retry:
+          initial-interval: 100ms
+          max-interval: 1s

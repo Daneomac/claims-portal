@@ -19,18 +19,37 @@ spring:
     port: ${RABBITMQ_PORT:5672}
     username: ${RABBITMQ_USER}
     password: ${RABBITMQ_PASSWORD}
+    connection-timeout: 5s   # fail fast when the broker is unreachable (client default: 60 s)
+    listener:
+      simple:
+        prefetch: 10         # most unacked messages the broker sends this consumer at once
+        retry:               # ADR 0004; non-retryable failures skip this (MessagingConfiguration)
+          enabled: true
+          max-retries: 3     # retries after the first attempt: 4 attempts in all
+          initial-interval: 1s
+          multiplier: 2      # waits 1 s, 2 s, 4 s between the attempts
+          max-interval: 10s  # no single wait is longer than this
   mail:
     host: ${SMTP_HOST:localhost}
     port: ${SMTP_PORT:1025}
+    properties:
+      # Jakarta Mail waits forever by default; a hung SMTP server would block the listener
+      "[mail.smtp.connectiontimeout]": 5000
+      "[mail.smtp.timeout]": 5000
+      "[mail.smtp.writetimeout]": 5000
 
 server:
   port: 8081
+
+notifications:
+  email:
+    from: ${EMAIL_FROM:claims-noreply@example.com}
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
   endpoint:
     health:
       probes:

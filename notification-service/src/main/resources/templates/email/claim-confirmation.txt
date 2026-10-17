@@ -1,0 +1,22 @@
+[# th:remove="all"]
+  Plain-text part of the claim confirmation email (Thymeleaf TEXT mode). Values use the
+  unescaped [(...)] form: plain text has no markup, so there is nothing to escape.
+[/]Hi [(${firstName})],
+
+Thank you for telling us about your loss. We've received your claim and it's now with our claims team.
+
+Your claim number: [(${claimNumber})]
+Please quote it whenever you contact us about this claim.
+
+Type of loss: [(${lossType})]
+Date of loss: [(${lossDate})]
+Policy:       [(${policyNumber})]
+
+What happens next
+- An adjuster will contact you within 2 business days.
+- If it's safe to do so, take photos of the damage and keep any receipts for emergency repairs.
+- Please don't throw away damaged items until the adjuster has seen them.
+
+The Claims Team
+
+This is an automated message; replies to this address aren't monitored.
