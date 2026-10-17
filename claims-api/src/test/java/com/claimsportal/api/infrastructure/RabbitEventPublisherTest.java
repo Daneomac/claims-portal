@@ -68,21 +68,10 @@ class RabbitEventPublisherTest {
         assertThat(properties.getContentType()).isEqualTo("application/json");
         assertThat(properties.getDeliveryMode()).isEqualTo(MessageDeliveryMode.PERSISTENT);
         assertThat(properties.<Integer>getHeader("eventVersion")).isEqualTo(1);
+        // The template's observation adds traceparent when it sends (OutboxPublishingIntegrationTest)
         assertThat(properties.getHeaders()).doesNotContainKey("traceparent");
         assertThat(new String(sent.getValue().getBody(), UTF_8)).isEqualTo(PAYLOAD);
         assertThat(correlation.getValue().getId()).isEqualTo(event.eventId().toString());
-    }
-
-    @Test
-    void passesTheSavedTraceParentThrough() {
-        String traceParent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
-        brokerReplies(correlation -> correlation.getFuture().complete(new CorrelationData.Confirm(true, null)));
-
-        publisher.publish(new OutboxMessage(event.eventId(), "ClaimSubmitted", 1, PAYLOAD, traceParent));
-
-        ArgumentCaptor<Message> sent = ArgumentCaptor.forClass(Message.class);
-        verify(rabbitTemplate).send(anyString(), anyString(), sent.capture(), any(CorrelationData.class));
-        assertThat(sent.getValue().getMessageProperties().<String>getHeader("traceparent")).isEqualTo(traceParent);
     }
 
     @Test

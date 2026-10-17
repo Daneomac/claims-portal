@@ -447,18 +447,61 @@ How it's built (milestone 5):
 
 - **Health:** Actuator liveness/readiness, including DB and RabbitMQ indicators. Compose
   `healthcheck`s plus `depends_on: condition: service_healthy`, so services start in order.
-- **Structured logs:** Spring Boot's built-in structured logging
-  (`logging.structured.format.console=ecs`), giving JSON lines with trace/span IDs.
-- **Tracing:** Micrometer Tracing (OpenTelemetry bridge) with RabbitMQ template/listener
-  observations enabled, so **one trace ID follows a claim from the HTTP request, through the
-  outbox and the broker, into the notification logs**. No collector is needed to show this in
-  logs. *(stretch: OTLP → Jaeger container for a visual trace)*
-- **Metrics:** `/actuator/prometheus` with counters `claims.submitted`,
-  `notifications.sent`, `notifications.failed` (events dead-lettered), `notifications.duplicates_skipped` and a gauge
-  `outbox.pending`. *(stretch: Prometheus + Grafana in Compose)*
+- **Structured logs:** Spring Boot's built-in structured logging. Compose sets
+  `LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs`, so the containers write one JSON object per line in
+  the Elastic Common Schema; IDE and test runs keep Spring's readable format. ECS rather than
+  the Logstash format because it's a documented, vendor-neutral schema (`service.name`,
+  `log.level`, `error.stack_trace`, ...) that most log tools understand, and it's being merged
+  into OpenTelemetry's semantic conventions. Every line written during a traced request or
+  message has `traceId` and `spanId`. The PII rule (section 8) still holds: messages contain
+  only claim numbers, event IDs and trace IDs.
+- **Tracing:** `spring-boot-starter-opentelemetry` (Micrometer Tracing with the
+  OpenTelemetry bridge, W3C `traceparent` propagation). Sampling is 100% locally
+  (`management.tracing.sampling.probability: 1.0`). RabbitMQ observations are on for the
+  producer's `RabbitTemplate` (`spring.rabbitmq.template.observation-enabled`) and the
+  consumer's listener container (`spring.rabbitmq.listener.simple.observation-enabled`): the
+  template adds a `traceparent` header to each message and the listener continues that trace.
+  So **one trace ID follows a claim from the HTTP request, through the outbox and the broker,
+  into the notification-service's email send and logs.** The SMTP send has its own span
+  (`notification.email.send`, also a timer metric).
+- **Through the outbox:** the relay publishes on a scheduler thread, outside the request, so
+  the trace context is saved with the event and restored when it's published
+  (`OutboxTracing`):
+  1. `JpaEventOutbox.append` runs inside the request's span. It writes that context as a W3C
+     `traceparent` (`00-<trace ID>-<span ID>-01`) into `outbox_event.trace_parent`, in the
+     same transaction as the claim.
+  2. For each row, `OutboxRelay` starts an `outbox publish` span whose parent is the saved
+     context, and makes it current while it sends. The `RabbitTemplate`'s send span is a child
+     of it, and the message's `traceparent` header carries the original trace ID.
+  3. A row without `trace_parent` (written outside a request) still publishes, in a new trace.
 
-Note: the outbox relay runs on a scheduler, so the trace context is saved in the outbox row
-(`trace_parent` column) and restored when publishing, to keep the trace continuous.
+  Both directions use Micrometer's `Propagator`, the same W3C code that handles the HTTP and
+  AMQP headers. Spring's observation of `@Scheduled` runs is switched off in claims-api
+  (`management.observations.enable.tasks.scheduled.execution: false`); otherwise every
+  500 ms relay poll would start a new, empty trace. For the same reason both services skip
+  observing `/actuator` requests (an `ObservationPredicate` in `ObservabilityConfiguration`),
+  so the Compose health checks don't add a trace every 10 seconds.
+- **Trace ID for callers:** every claims-api response has an `X-Trace-Id` header, and a 500
+  `ProblemDetail` includes `traceId`, which leads straight to the error's log lines.
+- **Trace viewer:** Compose runs Jaeger v2 (all-in-one, in-memory) at http://localhost:16686.
+  The apps export spans over OTLP/HTTP only when
+  `MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT` is set, which only Compose does, so
+  tests and IDE runs neither need Jaeger nor log export errors.
+- **Metrics:** `/actuator/prometheus` on both services: counters `claims.submitted`,
+  `notifications.sent`, `notifications.failed` (events dead-lettered),
+  `notifications.duplicates_skipped`, the gauge `outbox.pending`, the
+  `notification.email.send` timer, and Spring's HTTP and RabbitMQ timers. OTLP metrics push
+  (on by default with the OpenTelemetry starter) is switched off: Prometheus scrapes instead.
+  *(stretch: Prometheus + Grafana in Compose)*
+- **Tests:** Spring Boot tests switch span export off, and with it W3C propagation, so the
+  tracing tests use `@AutoConfigureTracing`. claims-api checks that the outbox row and the
+  published message are in the request's trace, that a caller's `traceparent` is joined, and
+  that a row without trace context publishes in a new trace; notification-service checks
+  that the email is sent, and logged, in the trace from the message's header.
+- **Production notes:** lower the sampling rate (the trace ID is still in every log line
+  when a trace isn't sampled); send spans to a collector rather than straight to a backend;
+  strip or re-validate an incoming `traceparent` at the edge (nginx) so the public can't
+  choose trace IDs.
 
 ## 10. Testing strategy
 
@@ -502,15 +545,15 @@ Each one ends green and committed; I review each commit before the next one star
 | 4 | **notification-service** — listener, idempotency, templates, SMTP, retry + DLQ | Email visible in Mailpit; duplicate and DLQ tests pass |
 | 5 | **claims-web** — form, validation, confirmation, error states, accessibility | Component tests pass; manual keyboard/screen-reader pass |
 | 6 | **Containerize** — Dockerfiles (multi-stage, non-root), nginx config, full Compose | `docker compose up --build` → full workflow works in the browser |
-| 7 | **Observability** — structured logs, tracing across the broker, health checks | One trace ID visible in both services' logs for a submission |
+| 7 | **Observability** — structured logs, tracing across the broker (through the outbox), Jaeger | One trace ID visible in both services' logs for a submission |
 | 8 | **E2E + CI** — Playwright suite, GitHub Actions, Dependabot | Pipeline green on GitHub |
 | 9 | **Docs** — README (prerequisites, run, test, demo script, architecture, trade-offs, production improvements, AI usage statement), finished ADRs, `docs/events.md` | A fresh clone works by following the README alone |
-| 10 | *(stretch)* Jaeger/Grafana, API `Idempotency-Key`, GHCR images, free-tier cloud deployment | — |
+| 10 | *(stretch)* Prometheus/Grafana, API `Idempotency-Key`, GHCR images, free-tier cloud deployment | — |
 
 ## 13. Interview prep (to fill in as we go)
 
 - Demo script: form → validation errors → submit → confirmation → Mailpit email → RabbitMQ UI
-  → logs with one trace ID → stop Mailpit, submit, show retries/DLQ → restart and replay.
+  → logs with one trace ID and the same trace in Jaeger → stop Mailpit, submit, show retries/DLQ → restart and replay.
 - Likely questions: why the outbox; what happens if X is down (DB, broker, SMTP, consumer);
   how this scales (more consumers on the queue, relay with SKIP LOCKED, partitioning); what's
   missing for production (section 8 notes, auth, monitoring/alerting, DLQ runbook).

@@ -8,6 +8,8 @@ import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import io.micrometer.tracing.Tracer;
+import io.micrometer.tracing.propagation.Propagator;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -37,7 +39,9 @@ class OutboxRelayTest {
     @BeforeEach
     void setUp() {
         var properties = new OutboxProperties(true, Duration.ofMillis(500), BATCH_SIZE, Duration.ofSeconds(5));
-        relay = new OutboxRelay(outbox, publisher, properties, Clock.fixed(NOW, ZoneOffset.UTC));
+        // No-op tracing: OutboxPublishingIntegrationTest checks the trace propagation
+        var tracing = new OutboxTracing(Tracer.NOOP, Propagator.NOOP);
+        relay = new OutboxRelay(outbox, publisher, properties, Clock.fixed(NOW, ZoneOffset.UTC), tracing);
     }
 
     @Test

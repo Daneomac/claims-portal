@@ -7,6 +7,7 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -23,6 +24,9 @@ import com.claimsportal.api.domain.ClaimStatus;
 import com.claimsportal.api.domain.InvalidClaimException;
 import com.claimsportal.api.domain.LossType;
 import com.claimsportal.api.domain.Province;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.TraceContext;
+import io.micrometer.tracing.Tracer;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -61,6 +65,10 @@ class ClaimControllerTest {
 
     @MockitoBean
     private ClaimSubmissionService claimSubmissionService;
+
+    /** The slice has no tracing set up; with no current span, no trace ID is added. */
+    @MockitoBean
+    private Tracer tracer;
 
     @Test
     void returns201WithTheClaimNumber() throws Exception {
@@ -171,10 +179,13 @@ class ClaimControllerTest {
     void returnsAGeneric500ForUnexpectedErrors() throws Exception {
         given(claimSubmissionService.submit(any()))
                 .willThrow(new IllegalStateException("connection to db-internal-7 refused"));
+        aRequestTracedAs("4bf92f3577b34da6a3ce929d0e0e4736");
 
         postClaim(VALID_CLAIM)
                 .andExpect(status().isInternalServerError())
+                .andExpect(header().string("X-Trace-Id", "4bf92f3577b34da6a3ce929d0e0e4736"))
                 .andExpect(jsonPath("$.detail").value(ApiExceptionHandler.UNEXPECTED_ERROR))
+                .andExpect(jsonPath("$.traceId").value("4bf92f3577b34da6a3ce929d0e0e4736"))
                 .andExpect(content().string(not(containsString("db-internal-7"))))
                 .andExpect(content().string(not(containsString("IllegalStateException"))));
     }
@@ -187,6 +198,15 @@ class ClaimControllerTest {
         postClaim(VALID_CLAIM).andExpect(status().isInternalServerError());
 
         assertThat(output).doesNotContain("jane.doe@example.com", "204-555-0142", "Doe");
+    }
+
+    /** Makes the mocked tracer report a current span in the given trace. */
+    private void aRequestTracedAs(String traceId) {
+        Span span = mock();
+        TraceContext context = mock();
+        given(context.traceId()).willReturn(traceId);
+        given(span.context()).willReturn(context);
+        given(tracer.currentSpan()).willReturn(span);
     }
 
     private ResultActions postClaim(String json) throws Exception {

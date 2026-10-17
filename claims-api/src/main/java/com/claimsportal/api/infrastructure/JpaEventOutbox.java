@@ -10,17 +10,20 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Writes events to {@code outbox_event} in the caller's transaction. Publishing to RabbitMQ
- * is done later by {@link OutboxRelay}.
+ * is done later by {@link OutboxRelay}. The current trace context is saved with each event,
+ * so the publish continues the request's trace ({@link OutboxTracing}).
  */
 @Repository
 class JpaEventOutbox implements EventOutbox {
 
     private final EntityManager entityManager;
     private final JsonMapper jsonMapper;
+    private final OutboxTracing tracing;
 
-    JpaEventOutbox(EntityManager entityManager, JsonMapper jsonMapper) {
+    JpaEventOutbox(EntityManager entityManager, JsonMapper jsonMapper, OutboxTracing tracing) {
         this.entityManager = entityManager;
         this.jsonMapper = jsonMapper;
+        this.tracing = tracing;
     }
 
     /** MANDATORY: fail loudly if there's no transaction, rather than save the event on its own. */
@@ -34,7 +37,7 @@ class JpaEventOutbox implements EventOutbox {
                 ClaimSubmitted.TYPE,
                 ClaimSubmitted.VERSION,
                 payload,
-                null, // trace context is captured once tracing is added (milestone 7)
+                tracing.currentTraceParent(), // e.g. the HTTP request's trace; null if not traced
                 event.occurredAt()));
     }
 }

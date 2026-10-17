@@ -11,19 +11,23 @@ import com.claimsportal.notification.application.ConfirmationEmail;
 import com.claimsportal.notification.application.EmailSender;
 import com.claimsportal.notification.persistence.ProcessedEventRepository;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.tracing.Tracer;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.micrometer.tracing.test.autoconfigure.AutoConfigureTracing;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
@@ -36,8 +40,13 @@ import tools.jackson.databind.JsonNode;
  * The whole consumer against real Postgres, RabbitMQ and Mailpit (Testcontainers): events are
  * published to {@code claims.events} the way claims-api publishes them, and the emails are
  * read back through Mailpit's API.
+ *
+ * <p>Spring Boot tests switch tracing export off by default, and with it W3C propagation (the
+ * traceparent header would be ignored), so {@code @AutoConfigureTracing} switches it back on.
+ * No OTLP endpoint is set, so the spans still aren't sent anywhere.
  */
 @SpringBootTest
+@AutoConfigureTracing
 @ActiveProfiles("test")
 @Import({TestcontainersConfiguration.class, MailpitContainerConfiguration.class})
 @ExtendWith(OutputCaptureExtension.class)
@@ -64,6 +73,9 @@ class ClaimConfirmationIntegrationTest {
     @MockitoSpyBean
     private EmailSender emailSender;
 
+    @Autowired
+    private Tracer tracer;
+
     @Test
     void emailsTheCustomerTheirClaimNumber() {
         TestClaim claim = TestClaim.random();
@@ -81,6 +93,33 @@ class ClaimConfirmationIntegrationTest {
                 .doesNotContain("RRM-12345678");
         assertThat(processedEvents.findById(claim.eventId())).hasValueSatisfying(
                 processed -> assertThat(processed.getClaimNumber()).isEqualTo(claim.claimNumber()));
+    }
+
+    /**
+     * PLAN section 9: claims-api's message carries a W3C traceparent header, and the listener
+     * container's observation continues that trace, so the email is sent, and the log lines
+     * are written, with the producer's trace ID.
+     */
+    @Test
+    void handlesTheEventInTheTraceFromItsTraceparentHeader(CapturedOutput output) {
+        TestClaim claim = TestClaim.random();
+        String traceId = UUID.randomUUID().toString().replace("-", "");
+        Message message = claim.message();
+        message.getMessageProperties().setHeader("traceparent", "00-" + traceId + "-00f067aa0ba902b7-01");
+        AtomicReference<String> traceIdWhileSending = new AtomicReference<>();
+        doAnswer(invocation -> {
+            traceIdWhileSending.set(tracer.currentSpan().context().traceId());
+            return invocation.callRealMethod();
+        }).when(emailSender).send(any());
+
+        publish(message);
+
+        await().atMost(TIMEOUT).until(() -> !mailpit.messagesTo(claim.email()).isEmpty());
+        assertThat(traceIdWhileSending).hasValue(traceId);
+        // The log lines get the trace ID from the logging context (MDC)
+        await().atMost(TIMEOUT).untilAsserted(() -> assertThat(output.getAll().lines()
+                .filter(line -> line.contains("Sent the confirmation for claim " + claim.claimNumber())))
+                .singleElement().asString().contains(traceId));
     }
 
     @Test

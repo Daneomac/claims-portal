@@ -24,6 +24,7 @@ spring:
     publisher-returns: true              # an unroutable message comes back instead of being dropped
     template:
       mandatory: true                    # ask the broker to return unroutable messages
+      observation-enabled: true          # a span per publish, and a traceparent header on the message
 
 server:
   port: 8080
@@ -46,3 +47,18 @@ management:
     health:
       probes:
         enabled: true
+  # Tracing (PLAN section 9). Trace and span IDs go into every log line written during a
+  # traced request or message. Spans are only sent anywhere when an OTLP endpoint is set
+  # (management.opentelemetry.tracing.export.otlp.endpoint), which docker-compose.yml does.
+  tracing:
+    sampling:
+      probability: 1.0   # trace everything locally; a production setting would be much lower
+  observations:
+    enable:
+      # Spring observes every @Scheduled run, which would start a new, empty trace for each
+      # outbox relay poll (twice a second). The relay starts its own span per event instead.
+      tasks.scheduled.execution: false
+  otlp:
+    metrics:
+      export:
+        enabled: false   # metrics are scraped from /actuator/prometheus, not pushed over OTLP

@@ -2,6 +2,8 @@ package com.claimsportal.notification.email;
 
 import com.claimsportal.notification.application.ConfirmationEmail;
 import com.claimsportal.notification.application.EmailSender;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
 import java.nio.charset.StandardCharsets;
@@ -17,11 +19,14 @@ class SmtpEmailSender implements EmailSender {
     private final JavaMailSender mailSender;
     private final ConfirmationEmailRenderer renderer;
     private final EmailProperties properties;
+    private final ObservationRegistry observationRegistry;
 
-    SmtpEmailSender(JavaMailSender mailSender, ConfirmationEmailRenderer renderer, EmailProperties properties) {
+    SmtpEmailSender(JavaMailSender mailSender, ConfirmationEmailRenderer renderer, EmailProperties properties,
+            ObservationRegistry observationRegistry) {
         this.mailSender = mailSender;
         this.renderer = renderer;
         this.properties = properties;
+        this.observationRegistry = observationRegistry;
     }
 
     /**
@@ -44,6 +49,11 @@ class SmtpEmailSender implements EmailSender {
         } catch (MessagingException e) {
             throw new MailPreparationException("Could not build the email for claim " + email.claimNumber(), e);
         }
-        mailSender.send(message);
+        // The SMTP call is the slow, failure-prone step, so it gets its own span in the trace
+        // (a child of the message's span) and a timer, notification.email.send, with an
+        // error tag when it fails
+        Observation.createNotStarted("notification.email.send", observationRegistry)
+                .contextualName("send confirmation email")
+                .observe(() -> mailSender.send(message));
     }
 }

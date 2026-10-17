@@ -23,6 +23,7 @@ spring:
     listener:
       simple:
         prefetch: 10         # most unacked messages the broker sends this consumer at once
+        observation-enabled: true  # a span per message, continuing the trace in its traceparent header
         retry:               # ADR 0004; non-retryable failures skip this (MessagingConfiguration)
           enabled: true
           max-retries: 3     # retries after the first attempt: 4 attempts in all
@@ -54,3 +55,13 @@ management:
     health:
       probes:
         enabled: true
+  # Tracing (PLAN section 9). Trace and span IDs go into every log line written while a
+  # message is handled. Spans are only sent anywhere when an OTLP endpoint is set
+  # (management.opentelemetry.tracing.export.otlp.endpoint), which docker-compose.yml does.
+  tracing:
+    sampling:
+      probability: 1.0   # trace everything locally; a production setting would be much lower
+  otlp:
+    metrics:
+      export:
+        enabled: false   # metrics are scraped from /actuator/prometheus, not pushed over OTLP

@@ -1,6 +1,7 @@
 package com.claimsportal.api.web;
 
 import com.claimsportal.api.domain.InvalidClaimException;
+import io.micrometer.tracing.Tracer;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -39,6 +40,12 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     static final String UNREADABLE_BODY = "The request body isn't valid JSON, or a value has the wrong type.";
     static final String UNEXPECTED_ERROR = "Something went wrong on our side. Please try again later.";
 
+    private final Tracer tracer;
+
+    ApiExceptionHandler(Tracer tracer) {
+        this.tracer = tracer;
+    }
+
     /** Bean Validation failures on the request body. */
     @Override
     protected ResponseEntity<Object> handleMethodArgumentNotValid(MethodArgumentNotValidException ex,
@@ -69,11 +76,20 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return problem;
     }
 
-    /** Anything else is our fault: log it in full, tell the client nothing about it. */
+    /**
+     * Anything else is our fault: log it in full, tell the client nothing about it except the
+     * trace ID. The error log line carries the same trace ID, so a customer or support person
+     * quoting it leads straight to the stack trace.
+     */
     @ExceptionHandler
     ProblemDetail handleUnexpected(Exception ex) {
         log.error("Unhandled error while processing a request", ex);
-        return ProblemDetail.forStatusAndDetail(HttpStatus.INTERNAL_SERVER_ERROR, UNEXPECTED_ERROR);
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.INTERNAL_SERVER_ERROR, UNEXPECTED_ERROR);
+        String traceId = TraceIdResponseFilter.currentTraceId(tracer);
+        if (traceId != null) {
+            problem.setProperty("traceId", traceId);
+        }
+        return problem;
     }
 
     /**

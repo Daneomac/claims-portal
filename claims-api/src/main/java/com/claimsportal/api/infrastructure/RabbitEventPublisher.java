@@ -25,12 +25,14 @@ import org.springframework.stereotype.Component;
  * the message; with {@code mandatory} set, a message that matched no queue comes back as a
  * "return" before the ack, because an ack alone would also be sent for a message that was
  * routed nowhere and dropped.
+ *
+ * <p>The template's observation also traces each send and adds the {@code traceparent}
+ * header, so the consumer continues the same trace.
  */
 @Component
 class RabbitEventPublisher implements EventPublisher {
 
     static final String EVENT_VERSION_HEADER = "eventVersion";
-    static final String TRACEPARENT_HEADER = "traceparent";
 
     private final RabbitTemplate rabbitTemplate;
     private final Duration confirmTimeout;
@@ -61,9 +63,8 @@ class RabbitEventPublisher implements EventPublisher {
         properties.setContentType(MessageProperties.CONTENT_TYPE_JSON);
         properties.setDeliveryMode(MessageDeliveryMode.PERSISTENT); // written to disk on durable queues
         properties.setHeader(EVENT_VERSION_HEADER, event.eventVersion());
-        if (event.traceParent() != null) {
-            properties.setHeader(TRACEPARENT_HEADER, event.traceParent());
-        }
+        // No traceparent header here: with spring.rabbitmq.template.observation-enabled, the
+        // template adds one for its send span, a child of the relay's span (OutboxTracing)
         return new Message(event.payload().getBytes(UTF_8), properties);
     }
 

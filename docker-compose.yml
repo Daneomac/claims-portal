@@ -4,6 +4,10 @@
 #   docker compose up --build -d --wait
 #   -> http://localhost:3000          # the claim form
 #
+# Observability: the apps log one JSON object per line (Elastic Common Schema), and send
+# their trace spans to Jaeger. One submission is a single trace across both services:
+#   -> http://localhost:16686        # Jaeger UI (traces are kept in memory only)
+#
 # Start order is enforced with healthchecks: postgres/rabbitmq/mailpit first, then
 # claims-api and notification-service, then claims-web (nginx). `--wait` returns
 # once everything is healthy. Secrets come from .env (git-ignored); compose refuses
@@ -62,9 +66,25 @@ services:
       timeout: 3s
       retries: 20
 
+  # Trace viewer (Jaeger v2 all-in-one: OTLP receiver, in-memory storage and the UI). Only
+  # used for looking at traces; the apps work without it (spans that can't be sent are dropped).
+  jaeger:
+    image: jaegertracing/jaeger:2.22.0
+    ports:
+      - "16686:16686"   # web UI; the apps send spans to port 4318 (OTLP over HTTP) on the compose network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:13133/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   claims-api:
     build: ./claims-api
     environment:
+      # JSON log lines for a log pipeline; IDE and test runs keep Spring's readable format
+      LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
+      # Without an endpoint (IDE, tests) spans are created for the logs but not exported
+      MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT: http://jaeger:4318/v1/traces
       DB_HOST: postgres
       RABBITMQ_HOST: rabbitmq
       CLAIMS_DB_PASSWORD: ${CLAIMS_DB_PASSWORD:?set in .env (see .env.example)}
@@ -78,6 +98,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      jaeger:
+        condition: service_started   # only so early spans have somewhere to go; not a hard dependency
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/actuator/health/readiness"]
       interval: 10s
@@ -89,6 +111,8 @@ services:
   notification-service:
     build: ./notification-service
     environment:
+      LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
+      MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT: http://jaeger:4318/v1/traces
       DB_HOST: postgres
       RABBITMQ_HOST: rabbitmq
       SMTP_HOST: mailpit
@@ -105,6 +129,8 @@ services:
         condition: service_healthy
       mailpit:
         condition: service_healthy
+      jaeger:
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8081/actuator/health/readiness"]
       interval: 10s

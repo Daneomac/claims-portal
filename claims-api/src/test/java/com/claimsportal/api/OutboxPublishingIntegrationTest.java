@@ -12,6 +12,7 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Random;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -30,13 +31,16 @@ import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.core.TopicExchange;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.micrometer.tracing.test.autoconfigure.AutoConfigureTracing;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.testcontainers.rabbitmq.RabbitMQContainer;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -48,9 +52,15 @@ import tools.jackson.databind.json.JsonMapper;
  * <p>The message body is compared with {@code contracts/claim-submitted-v1.json}: this is the
  * producer side of the event contract test (ADR 0005). The notification service's tests parse
  * a copy of the same file, so a change that breaks consumers fails here first.
+ *
+ * <p>The trace propagation through the outbox is checked here too. Spring Boot tests switch
+ * tracing export off by default, and with it W3C propagation (no traceparent is read or
+ * written), so {@code @AutoConfigureTracing} switches it back on. No OTLP endpoint is set, so
+ * the spans still aren't sent anywhere.
  */
 @SpringBootTest(properties = "claims.outbox.confirm-timeout=1s")
 @AutoConfigureMockMvc
+@AutoConfigureTracing
 @Import(TestcontainersConfiguration.class)
 class OutboxPublishingIntegrationTest {
 
@@ -176,6 +186,64 @@ class OutboxPublishingIntegrationTest {
         await().atMost(TIMEOUT).untilAsserted(() -> assertThat(outboxRow(claimNumber).get("published_at")).isNotNull());
     }
 
+    /**
+     * PLAN section 9: one trace from the HTTP request, through the outbox row and the relay, to
+     * the message. The trace ID comes back in the X-Trace-Id header; the event's saved
+     * traceparent and the message's traceparent header must both be in that trace.
+     */
+    @Test
+    void theMessageContinuesTheTraceOfTheRequestThatSubmittedTheClaim() throws Exception {
+        bindTestQueue();
+
+        MockHttpServletResponse response = postClaim(LocalDate.now(ZoneId.of("America/Winnipeg")).minusDays(3), null);
+        String traceId = response.getHeader("X-Trace-Id");
+        String claimNumber = jsonMapper.readTree(response.getContentAsString()).get("claimNumber").asString();
+
+        assertThat(traceId).matches("[0-9a-f]{32}");
+        assertThat((String) outboxRow(claimNumber).get("trace_parent")).matches(traceParentIn(traceId));
+        Message message = awaitMessageFor(claimNumber);
+        assertThat(message.getMessageProperties().<String>getHeader("traceparent")).matches(traceParentIn(traceId));
+    }
+
+    /** A caller that is itself traced (e.g. a gateway) sends a traceparent; the claim joins that trace. */
+    @Test
+    void joinsATraceStartedByTheCaller() throws Exception {
+        String callersTraceId = UUID.randomUUID().toString().replace("-", "");
+
+        MockHttpServletResponse response = postClaim(LocalDate.now(ZoneId.of("America/Winnipeg")).minusDays(3),
+                "00-" + callersTraceId + "-00f067aa0ba902b7-01");
+        String claimNumber = jsonMapper.readTree(response.getContentAsString()).get("claimNumber").asString();
+
+        assertThat(response.getHeader("X-Trace-Id")).isEqualTo(callersTraceId);
+        assertThat((String) outboxRow(claimNumber).get("trace_parent")).matches(traceParentIn(callersTraceId));
+    }
+
+    /** E.g. a row written before tracing was added: it still publishes, in a trace of its own. */
+    @Test
+    void publishesAnEventSavedWithoutTraceContextInANewTrace() {
+        bindTestQueue();
+        String claimNumber = "HC-2026-" + (900_000 + new Random().nextInt(100_000));
+        jdbcClient.sql("""
+                        INSERT INTO outbox_event (id, aggregate_id, event_type, event_version, payload, created_at)
+                        VALUES (?, ?, 'ClaimSubmitted', 1, ?::jsonb, now())
+                        """)
+                .params(UUID.randomUUID(), UUID.randomUUID(), "{\"data\": {\"claimNumber\": \"" + claimNumber + "\"}}")
+                .update();
+
+        Message message = awaitMessageFor(claimNumber);
+
+        assertThat(message.getMessageProperties().<String>getHeader("traceparent"))
+                .matches(traceParentIn("[0-9a-f]{32}"));
+    }
+
+    /**
+     * A W3C traceparent in the given trace: version 00, trace ID, span ID, then the flags,
+     * which vary (01 = sampled; OpenTelemetry also sets 02 for a trace ID it generated).
+     */
+    private static String traceParentIn(String traceId) {
+        return "00-" + traceId + "-[0-9a-f]{16}-[0-9a-f]{2}";
+    }
+
     private void bindTestQueue() {
         // Durable and not exclusive (RabbitMQ 4 no longer allows transient shared queues), so it
         // also survives the broker-down test; deleted after each test
@@ -196,12 +264,21 @@ class OutboxPublishingIntegrationTest {
     }
 
     private String submitClaim(LocalDate lossDate) throws Exception {
-        String response = mockMvc.perform(post("/api/v1/claims")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(claimJson(lossDate)))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString();
+        String response = postClaim(lossDate, null).getContentAsString();
         return jsonMapper.readTree(response).get("claimNumber").asString();
+    }
+
+    /** Submits a claim, sending a traceparent header if one is given, and expects 201. */
+    private MockHttpServletResponse postClaim(LocalDate lossDate, String traceParent) throws Exception {
+        MockHttpServletRequestBuilder request = post("/api/v1/claims")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(claimJson(lossDate));
+        if (traceParent != null) {
+            request.header("traceparent", traceParent);
+        }
+        return mockMvc.perform(request)
+                .andExpect(status().isCreated())
+                .andReturn().getResponse();
     }
 
     private Map<String, Object> outboxRow(String claimNumber) {

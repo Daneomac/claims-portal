@@ -33,6 +33,7 @@ email appears in the Mailpit inbox at http://localhost:8025.
 | notification-service | http://localhost:8081/actuator/health | actuator only, no business endpoints |
 | Mailpit inbox | http://localhost:8025 | every email the stack sends lands here |
 | RabbitMQ management | http://localhost:15672 | user and password from `.env` |
+| Jaeger (traces) | http://localhost:16686 | one trace per submission, across both services |
 
 Useful commands:
 
@@ -45,6 +46,28 @@ docker compose down -v                                   # stop and delete the d
 To run only the supporting services and start the apps from your IDE or `mvnw spring-boot:run`,
 use `docker compose up -d --wait postgres rabbitmq mailpit`; the apps' defaults point at
 `localhost`, and `npm run dev` in `claims-web` proxies `/api` to `localhost:8080`.
+
+## Seeing a trace
+
+Every claim submission is one trace, from the HTTP request through the outbox and RabbitMQ to
+the confirmation email (details in [PLAN section 9](docs/PLAN.md#9-observability)).
+
+1. Submit a claim (the form, or `POST /api/v1/claims`). Every claims-api response has an
+   `X-Trace-Id` header (visible in the browser's network tab or with `curl -i`).
+2. Find the log lines for it in both services. The containers log JSON (ECS), and every
+   line written for that claim has the same `traceId`:
+
+   ```bash
+   docker compose logs claims-api notification-service | grep <trace id>
+   ```
+
+3. Open Jaeger at http://localhost:16686, pick the `claims-api` service and the
+   `http post /api/v1/claims` operation (or paste the trace ID into the search box). The trace
+   shows the request, the `outbox publish` span about half a second later, the RabbitMQ send
+   and receive, and the email send in notification-service.
+
+Jaeger keeps traces in memory, so they're gone after `docker compose down`. Tests and IDE runs
+don't export spans; the trace IDs are still in their log lines.
 
 ## Running the tests
 
