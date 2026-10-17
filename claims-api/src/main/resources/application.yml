@@ -19,6 +19,11 @@ spring:
     port: ${RABBITMQ_PORT:5672}
     username: ${RABBITMQ_USER}
     password: ${RABBITMQ_PASSWORD}
+    connection-timeout: 5s               # fail fast when the broker is unreachable (client default: 60 s)
+    publisher-confirm-type: correlated   # the broker acks or nacks each message (ADR 0002)
+    publisher-returns: true              # an unroutable message comes back instead of being dropped
+    template:
+      mandatory: true                    # ask the broker to return unroutable messages
 
 server:
   port: 8080
@@ -26,12 +31,17 @@ server:
 claims:
   time-zone: America/Winnipeg   # "today" for the loss date rule and the claim number year
   max-loss-age-days: 365
+  outbox:
+    relay-enabled: true    # tests that drive the relay themselves turn the schedule off
+    poll-delay: 500ms      # pause between relay runs, measured from the end of the previous run
+    batch-size: 50         # most events published per run (and per transaction)
+    confirm-timeout: 5s    # how long to wait for the broker's ack before treating a publish as failed
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
   endpoint:
     health:
       probes:

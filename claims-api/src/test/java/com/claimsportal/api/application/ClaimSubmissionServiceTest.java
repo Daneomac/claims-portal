@@ -20,6 +20,7 @@ import com.claimsportal.api.domain.LossDateRule;
 import com.claimsportal.api.domain.LossType;
 import com.claimsportal.api.domain.Policyholder;
 import com.claimsportal.api.domain.Province;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
@@ -49,12 +50,15 @@ class ClaimSubmissionServiceTest {
     @Mock
     private EventOutbox outbox;
 
+    private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+
     private ClaimSubmissionService service;
 
     @BeforeEach
     void setUp() {
         service = new ClaimSubmissionService(claimNumberGenerator, claims, outbox,
-                new LossDateRule(ZoneId.of("America/Winnipeg"), 365), Clock.fixed(NOW, ZoneOffset.UTC));
+                new LossDateRule(ZoneId.of("America/Winnipeg"), 365), Clock.fixed(NOW, ZoneOffset.UTC),
+                meterRegistry);
     }
 
     @Test
@@ -88,6 +92,7 @@ class ClaimSubmissionServiceTest {
         assertThat(event.occurredAt()).isEqualTo(NOW);
 
         assertThat(result).isEqualTo(new SubmittedClaim(CLAIM_NUMBER, ClaimStatus.RECEIVED, NOW));
+        assertThat(claimsSubmittedCount()).isEqualTo(1);
     }
 
     @Test
@@ -110,6 +115,11 @@ class ClaimSubmissionServiceTest {
 
         verify(claims, never()).save(any());
         verify(outbox, never()).append(any());
+        assertThat(claimsSubmittedCount()).isZero();
+    }
+
+    private double claimsSubmittedCount() {
+        return meterRegistry.get("claims.submitted").counter().count();
     }
 
     private static SubmitClaimCommand command(LocalDate lossDate) {

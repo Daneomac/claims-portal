@@ -10,7 +10,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Writes events to {@code outbox_event} in the caller's transaction. Publishing to RabbitMQ
- * is done later by the outbox relay (milestone 3).
+ * is done later by {@link OutboxRelay}.
  */
 @Repository
 class JpaEventOutbox implements EventOutbox {

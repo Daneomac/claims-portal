@@ -3,6 +3,8 @@ package com.claimsportal.api.application;
 import com.claimsportal.api.domain.Claim;
 import com.claimsportal.api.domain.ClaimSubmitted;
 import com.claimsportal.api.domain.LossDateRule;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -22,14 +24,18 @@ public class ClaimSubmissionService {
     private final EventOutbox outbox;
     private final LossDateRule lossDateRule;
     private final Clock clock;
+    private final Counter claimsSubmitted;
 
     public ClaimSubmissionService(ClaimNumberGenerator claimNumberGenerator, ClaimRepository claims,
-            EventOutbox outbox, LossDateRule lossDateRule, Clock clock) {
+            EventOutbox outbox, LossDateRule lossDateRule, Clock clock, MeterRegistry meterRegistry) {
         this.claimNumberGenerator = claimNumberGenerator;
         this.claims = claims;
         this.outbox = outbox;
         this.lossDateRule = lossDateRule;
         this.clock = clock;
+        this.claimsSubmitted = Counter.builder("claims.submitted")
+                .description("Claims accepted and saved")
+                .register(meterRegistry);
     }
 
     /**
@@ -46,6 +52,9 @@ public class ClaimSubmissionService {
         claims.save(claim);
         outbox.append(ClaimSubmitted.from(claim, now));
 
+        // Counted just before the transaction commits. If the commit itself failed, the count
+        // would be one too high; that's rare, as the domain already enforces the schema's rules.
+        claimsSubmitted.increment();
         log.info("Claim {} submitted", claim.claimNumber());
         return SubmittedClaim.from(claim);
     }

@@ -24,9 +24,11 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * The whole submit flow against a real Postgres (Testcontainers): HTTP request in, claim row
- * and outbox row out, with the Flyway schema and Hibernate mappings exercised for real.
+ * and outbox row out, with the Flyway schema and Hibernate mappings exercised for real. The
+ * relay is switched off so the outbox row can be checked before anything publishes it; see
+ * {@link OutboxPublishingIntegrationTest} for publishing.
  */
-@SpringBootTest
+@SpringBootTest(properties = "claims.outbox.relay-enabled=false")
 @AutoConfigureMockMvc
 @Import(TestcontainersConfiguration.class)
 class ClaimSubmissionIntegrationTest {

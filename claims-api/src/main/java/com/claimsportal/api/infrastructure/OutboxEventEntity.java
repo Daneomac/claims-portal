@@ -14,6 +14,9 @@ import org.hibernate.type.SqlTypes;
 @Table(name = "outbox_event")
 class OutboxEventEntity {
 
+    /** The size of the {@code last_error} column. */
+    static final int MAX_ERROR_LENGTH = 1000;
+
     @Id
     private UUID id;
 
@@ -62,6 +65,41 @@ class OutboxEventEntity {
         entity.createdAt = createdAt;
         entity.attempts = 0;
         return entity;
+    }
+
+    OutboxMessage toMessage() {
+        return new OutboxMessage(id, eventType, eventVersion, payload, traceParent);
+    }
+
+    /** Called once the broker has confirmed the message. */
+    void markPublished(Instant publishedAt) {
+        this.publishedAt = publishedAt;
+    }
+
+    /**
+     * Counts a failed publish and keeps the reason. The row stays unpublished, so the relay
+     * tries it again on a later run. {@code error} must not contain personal information.
+     */
+    void recordFailure(String error) {
+        attempts++;
+        lastError = error.length() > MAX_ERROR_LENGTH ? error.substring(0, MAX_ERROR_LENGTH) : error;
+    }
+
+    UUID id() {
+        return id;
+    }
+
+    Instant publishedAt() {
+        return publishedAt;
+    }
+
+    /** Failed publish attempts so far. */
+    int attempts() {
+        return attempts;
+    }
+
+    String lastError() {
+        return lastError;
     }
 
     /** The payload holds personal information, so only identifiers are printed. */

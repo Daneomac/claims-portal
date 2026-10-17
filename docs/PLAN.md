@@ -212,8 +212,17 @@ sequence doesn't reset each year; a yearly reset is a possible production change
   at the same time.
 - Publish each row as a persistent message with **publisher confirms** and mandatory
   returns. The row is marked `published_at` only after the broker acks.
-- On failure: increment `attempts`, record `last_error` (no PII), and leave the row for the
-  next pass. A gauge reports the unpublished count so a stalled relay is visible.
+- A publish fails on a nack, a return (nothing bound to the exchange) or no confirm within
+  `claims.outbox.confirm-timeout` (5 s). On failure: increment `attempts` (failed attempts
+  only), record `last_error` (no PII), leave the row for the next pass, and **stop the batch**.
+  Failures are almost always broker-wide, so trying the rest would only wait out more
+  timeouts while holding the row locks. Rows published before the failure still commit.
+- A gauge (`outbox.pending`) reports the unpublished count so a stalled relay is visible.
+- Classes (`infrastructure`): `OutboxRelay` (the transactional batch), `OutboxRelaySchedule`
+  (`@Scheduled` fixed delay, off with `claims.outbox.relay-enabled=false`),
+  `OutboxEventRepository` (native `SKIP LOCKED` query), `EventPublisher` port +
+  `RabbitEventPublisher`, `MessagingConfiguration` (declares `claims.events`). Settings live
+  in `OutboxProperties` under `claims.outbox.*`.
 - Result: at-least-once publishing. A crash between the ack and the update republishes once,
   which the consumer handles (ADR 0003).
 - Production notes: purge published rows on a schedule; CDC (e.g. Debezium) instead of
@@ -223,7 +232,9 @@ sequence doesn't reset each year; a yearly reset is a possible production change
 
 AMQP message properties: `messageId` = `eventId`, `type` = `ClaimSubmitted`,
 `contentType` = `application/json`, `deliveryMode` = persistent; header `eventVersion: 1`;
-`traceparent` is added automatically by Micrometer tracing.
+`traceparent` is added automatically by Micrometer tracing. Spring AMQP also adds its own
+`spring_returned_message_correlation` / `spring_listener_return_correlation` headers to match
+returns to sends; they're not part of the contract and consumers ignore them.
 
 ```json
 {
@@ -362,7 +373,8 @@ TDD for domain rules and the two use-case services; test-after for framework wir
 | Unit (domain) | claims-api | each validation rule's boundaries (loss date today / tomorrow / 365 / 366 days ago); claim number format; postal code / policy normalization |
 | Unit (application) | claims-api | `submit` saves the claim **and** appends a matching outbox event; nothing is appended if saving fails |
 | Web slice | claims-api `@WebMvcTest` | 201 + body on valid input; 400 `ProblemDetail` with field paths; malformed JSON → 400; no PII in logs |
-| Integration | claims-api + Testcontainers (Postgres, RabbitMQ) | submit → row in `claim` + `outbox_event` → relay publishes → message on a test queue with the right properties; broker down → row stays pending, then publishes after recovery |
+| Integration | claims-api + Testcontainers (Postgres, RabbitMQ) | submit → row in `claim` + `outbox_event` → relay publishes → message on a test queue with the right properties; broker down (container paused) → row stays pending, then publishes after recovery; nothing bound → returned, stays pending |
+| Contract (producer) | claims-api | published body matches `src/test/resources/contracts/claim-submitted-v1.json`; the notification service's tests parse a copy of that file (ADR 0005) |
 | Unit | notification-service | email contains the claim number and first name; masked policy; duplicate event skipped; SMTP failure propagates (for retry); unknown version → non-retryable |
 | Integration | notification-service + Testcontainers (Postgres, RabbitMQ, Mailpit) | publish event → email in Mailpit containing the claim number; same event twice → one email; SMTP down → retries → DLQ |
 | Architecture | both, ArchUnit | layer dependency rules; `domain` has no Spring/JPA imports |
