@@ -1,0 +1,65 @@
+version: 2
+
+# Weekly update PRs. Minor and patch updates are grouped into one PR per ecosystem and folder;
+# major updates arrive on their own so each one can be reviewed for breaking changes.
+updates:
+  - package-ecosystem: maven
+    directory: /claims-api
+    schedule:
+      interval: weekly
+    groups:
+      maven-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: maven
+    directory: /notification-service
+    schedule:
+      interval: weekly
+    groups:
+      maven-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /claims-web
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /e2e
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+
+  # Base images in the three Dockerfiles
+  - package-ecosystem: docker
+    directories:
+      - /claims-api
+      - /notification-service
+      - /claims-web
+    schedule:
+      interval: weekly
+    groups:
+      docker-minor-and-patch:
+        update-types: [minor, patch]
+
+  # The images in docker-compose.yml (Postgres, RabbitMQ, Mailpit, Jaeger)
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      compose-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions-minor-and-patch:
+        update-types: [minor, patch]

@@ -519,7 +519,7 @@ TDD for domain rules and the two use-case services; test-after for framework wir
 | Architecture | both, ArchUnit | layer dependency rules; `domain` has no Spring/JPA imports |
 | Component | claims-web, Vitest + RTL + MSW | required-field errors with the summary focused; date-in-future, bad policy number, short description and bad postal code; successful submit shows the claim number and focuses the confirmation, and sends the API's JSON shape; the button is disabled while pending; server 400 maps to fields; 500 and network errors show the banner and keep the data (and Try again works) |
 | Unit | claims-web | zod schema boundaries (365/366 days, 19/20 and 2000/2001 characters, amount limits, postal and policy formats, all 13 provinces); Winnipeg "today"; `submitClaim()` outcomes |
-| End-to-end | e2e/, Playwright vs Compose | fill the form in a real browser → confirmation shows a claim number → Mailpit API has an email to that address containing **the same** claim number |
+| End-to-end | e2e/, Playwright vs Compose | fill the form in a real browser → confirmation shows a claim number → Mailpit API has an email to that address containing **the same** claim number; empty submit shows the errors and makes no API call; axe finds no serious/critical violations on the form, the error state and the confirmation |
 
 The end-to-end test is the automated version of the interview demo.
 
@@ -530,7 +530,9 @@ The end-to-end test is the automated version of the interview demo.
 - `claims-web` job: `npm ci`, lint, type-check, test, build.
 - `e2e` job (after the above): `docker compose up --build --wait`, Playwright, upload the HTML
   report and Compose logs as artifacts if it fails.
-- Maven/npm caching; runs on pushes and PRs.
+- Maven/npm caching; runs on pushes and PRs; read-only token, superseded runs are cancelled.
+- Dependabot: weekly, minor and patch updates grouped per ecosystem (Maven, npm, Docker,
+  Compose, Actions).
 - *(stretch)* build and push images to GHCR on the default branch.
 
 ## 12. Milestones

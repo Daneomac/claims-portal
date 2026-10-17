@@ -1,5 +1,7 @@
 # Claims Portal
 
+[![CI](https://github.com/Daneomac/claims-portal/actions/workflows/ci.yml/badge.svg?branch=Dev)](https://github.com/Daneomac/claims-portal/actions/workflows/ci.yml)
+
 Home insurance claim submission portal: a React form, a Spring Boot API that validates and
 stores claims, and a separate notification service that consumes a `ClaimSubmitted` event
 from RabbitMQ and emails the customer their claim number.
@@ -77,6 +79,34 @@ cd notification-service && ./mvnw verify  # needs Docker (Testcontainers)
 cd claims-web && npm ci && npm test
 ```
 
+### End-to-end tests
+
+The Playwright suite in `e2e/` drives the real stack in Chromium: it fills in and submits the
+claim form, checks the confirmation, then polls Mailpit's API until the email arrives and checks
+that it carries the same claim number. It also checks the validation errors (and that no API
+call is made) and runs axe accessibility scans on the form and the confirmation.
+
+```bash
+docker compose up --build -d --wait   # the stack must be running (see Quick start)
+cd e2e
+npm ci
+npx playwright install chromium      # first time only (add --with-deps on a fresh Linux machine)
+npm test
+npm run report                        # open the HTML report (traces and screenshots of failures)
+```
+
+The tests expect the form at http://localhost:3000 and Mailpit at http://localhost:8025. To test
+another deployment, set `BASE_URL` and `MAILPIT_URL`.
+
+### Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull request. The
+two Java services (`./mvnw -B verify`, Testcontainers included) and claims-web (type-check, lint,
+test, build) are checked in parallel; if all three pass, the `e2e` job starts the Compose stack
+and runs the Playwright suite. When something fails, the Playwright report and the Compose logs
+are attached to the run as artifacts. Dependabot opens weekly update PRs for Maven, npm, Docker
+and GitHub Actions ([`.github/dependabot.yml`](.github/dependabot.yml)).
+
 ## Repository layout
 
 | Path | What |
@@ -84,5 +114,7 @@ cd claims-web && npm ci && npm test
 | `claims-api/` | Spring Boot claim submission API |
 | `notification-service/` | Spring Boot event consumer that sends confirmation emails |
 | `claims-web/` | React + TypeScript claim form, plus `nginx.conf` for the container |
+| `e2e/` | Playwright end-to-end tests that run against the Compose stack |
+| `.github/` | CI workflow and Dependabot configuration |
 | `infra/` | Supporting configuration (Postgres init script) |
 | `docs/` | Plan and architecture decision records |
