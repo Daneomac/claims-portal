@@ -1,0 +1,22 @@
+{
+  "policyholder": {
+    "firstName": "Jane",
+    "lastName": "Doe",
+    "email": "jane.doe@example.com",
+    "phone": "204-555-0142"
+  },
+  "policyNumber": "RRM-12345678",
+  "loss": {
+    "date": "2026-10-12",
+    "type": "WATER",
+    "description": "Burst pipe in the basement flooded the finished rec room.",
+    "estimatedAmount": 8500.00
+  },
+  "propertyAddress": {
+    "street": "123 Main St",
+    "city": "Winnipeg",
+    "province": "MB",
+    "postalCode": "R3C 1A1"
+  },
+  "declarationAccepted": true
+}

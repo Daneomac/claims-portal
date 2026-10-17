@@ -1,0 +1,7 @@
+{
+  "policyholder": { "firstName": "", "lastName": "Doe", "email": "not-an-email" },
+  "policyNumber": "X",
+  "loss": { "date": "2026-10-12", "type": "WATER", "description": "too short" },
+  "propertyAddress": { "street": "123 Main St", "city": "Winnipeg", "province": "MB", "postalCode": "R3C 1A1" },
+  "declarationAccepted": false
+}

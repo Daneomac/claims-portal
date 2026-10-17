@@ -1,8 +1,9 @@
 # Claims Portal — Architecture & Build Plan
 
 Working plan for the Red River Mutual Software Developer III challenge. Key decisions are
-recorded as ADRs in [`docs/adr/`](adr/). This document becomes the basis for the README's
-architecture section once the build is done.
+recorded as ADRs in [`docs/adr/`](adr/). It was written before the build and updated as each
+milestone landed; where it and the code ever disagreed, the code won and this file was fixed.
+The [README](../README.md) is the front door; this is the detailed design.
 
 ## 1. Goal and scope
 
@@ -27,12 +28,13 @@ system, file uploads, claim status tracking, admin UI.
 | Frontend | React + TypeScript + Vite | React 19.3, Vite 8.3 |
 | Form handling | react-hook-form + zod | 7.90 / 4.6 |
 | Database | PostgreSQL + Flyway migrations | 17 |
-| Message broker | RabbitMQ (with management plugin) | 4.x |
+| Message broker | RabbitMQ (with management plugin) | 4.3 |
 | Email | Mailpit (SMTP capture + web inbox + REST API) | latest pinned tag |
 | Web server | nginx (unprivileged image) serving the built SPA and reverse-proxying `/api` | 1.30-alpine |
 | Containers | Docker Compose | v5 |
+| Tracing | Jaeger v2 (all-in-one, in-memory) with OpenTelemetry/Micrometer in the apps | 2.22 |
 | Backend tests | JUnit 5, Mockito, AssertJ, Testcontainers, ArchUnit | — |
-| Frontend tests | Vitest, React Testing Library, MSW | Vitest 5 |
+| Frontend tests | Vitest, React Testing Library, MSW, oxlint | Vitest 5 |
 | End-to-end tests | Playwright against the Compose stack | 1.64 |
 | CI | GitHub Actions + Dependabot | — |
 
@@ -70,6 +72,8 @@ combination by default.
                                        └─────────────────────┘
 ```
 
+Not drawn: Jaeger (`:16686`). Both services send their spans to it over OTLP/HTTP (section 9).
+
 ### Key decisions (see ADRs)
 
 | # | Decision | Why it matters |
@@ -90,7 +94,7 @@ claims-portal/
 ├── claims-web/              React + TS — claim form, confirmation; Dockerfile + nginx.conf
 ├── e2e/                     Playwright tests against the running Compose stack
 ├── infra/postgres/          init script: one database + one user per service
-├── docs/                    PLAN.md, adr/, events.md, architecture diagram
+├── docs/                    PLAN.md, adr/ (decision records), events.md (event contract)
 ├── .github/                 workflows/ci.yml, dependabot.yml
 ├── docker-compose.yml
 ├── .env.example             local-only values; copied to .env (git-ignored)
@@ -110,6 +114,7 @@ Java base packages: `com.claimsportal.api` and `com.claimsportal.notification`.
 | PostgreSQL | 5432 | |
 | RabbitMQ | 5672 / 15672 | AMQP / management UI |
 | Mailpit | 1025 / 8025 | SMTP / inbox UI + API |
+| Jaeger | 16686 | Trace UI (the apps send spans to 4318 on the Compose network) |
 
 ## 4. claims-api
 
@@ -248,10 +253,14 @@ returns to sends; they're not part of the contract and consumers ignore them.
     "policyholder": { "firstName": "Jane", "lastName": "Doe", "email": "jane.doe@example.com" },
     "lossType": "WATER",
     "lossDate": "2026-10-12",
-    "submittedAt": "2026-10-16T18:04:11.501Z"
+    "submittedAt": "2026-10-16T18:04:11.532Z"
   }
 }
 ```
+
+`occurredAt` is set from the same instant as `data.submittedAt`, so the two are equal today. The
+full field reference, the AMQP details and the versioning rules are in
+[`events.md`](events.md); the JSON above is the fixture the tests use.
 
 The event carries the minimum the notification needs, and deliberately not the damage
 description, phone number or address. The alternative, a "thin" event plus a call back to
@@ -463,7 +472,7 @@ How it's built (milestone 5):
   template adds a `traceparent` header to each message and the listener continues that trace.
   So **one trace ID follows a claim from the HTTP request, through the outbox and the broker,
   into the notification-service's email send and logs.** The SMTP send has its own span
-  (`notification.email.send`, also a timer metric).
+  (a span named `send confirmation email`, from an observation called `notification.email.send` that is also a timer metric).
 - **Through the outbox:** the relay publishes on a scheduler thread, outside the request, so
   the trace context is saved with the event and restored when it's published
   (`OutboxTracing`):
@@ -532,7 +541,9 @@ The end-to-end test is the automated version of the interview demo.
   report and Compose logs as artifacts if it fails.
 - Maven/npm caching; runs on pushes and PRs; read-only token, superseded runs are cancelled.
 - Dependabot: weekly, minor and patch updates grouped per ecosystem (Maven, npm, Docker,
-  Compose, Actions).
+  Compose, Actions). Major versions are ignored for everything except GitHub Actions: they
+  need a deliberate upgrade, not a bot PR. (The first round of major-version PRs was reviewed and
+  rejected; the Postgres 18 one failed CI, and that image also changes the data directory layout.)
 - *(stretch)* build and push images to GHCR on the default branch.
 
 ## 12. Milestones
@@ -552,13 +563,21 @@ Each one ends green and committed; I review each commit before the next one star
 | 9 | **Docs** — README (prerequisites, run, test, demo script, architecture, trade-offs, production improvements, AI usage statement), finished ADRs, `docs/events.md` | A fresh clone works by following the README alone |
 | 10 | *(stretch)* Prometheus/Grafana, API `Idempotency-Key`, GHCR images, free-tier cloud deployment | — |
 
-## 13. Interview prep (to fill in as we go)
+**Status:** milestones 1–9 are done. Milestone 10 was not started; the stretch items are listed
+under "What I'd add for production" in the README instead.
 
-- Demo script: form → validation errors → submit → confirmation → Mailpit email → RabbitMQ UI
-  → logs with one trace ID and the same trace in Jaeger → stop Mailpit, submit, show retries/DLQ → restart and replay.
-- Likely questions: why the outbox; what happens if X is down (DB, broker, SMTP, consumer);
-  how this scales (more consumers on the queue, relay with SKIP LOCKED, partitioning); what's
-  missing for production (section 8 notes, auth, monitoring/alerting, DLQ runbook).
+## 13. Interview prep
+
+- **Demo script:** it's written out, step by step and checked against the running stack, in the
+  README's [demo section](../README.md#demo-script). In short: validation errors → submit →
+  confirmation → email in Mailpit → RabbitMQ UI → one trace in Jaeger and its trace ID in the
+  logs → stop RabbitMQ, submit, start it again → stop Mailpit, submit, watch the retries, find
+  the message in the DLQ, replay it.
+- **Likely questions:** why the outbox; what happens if X is down (DB, broker, SMTP, consumer);
+  how this scales (more consumers on the queue, relay with `SKIP LOCKED`, partitioning); what's
+  missing for production (section 8 notes, auth, monitoring/alerting, a DLQ runbook). The
+  README's "Key design decisions" and "What I'd add for production" sections hold the short
+  answers.
 
 ## 14. Schedule and decisions log
 
@@ -567,4 +586,4 @@ Each one ends green and committed; I review each commit before the next one star
 - **Branching:** work directly on `Dev` (the default branch), one commit per milestone or
   smaller.
 - **Plan accepted** as written on 17 Oct 2026.
-- Open: cloud deployment — decide after milestone 9 based on remaining time.
+- Cloud deployment: not done. The stack runs locally with Compose.

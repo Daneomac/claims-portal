@@ -35,10 +35,19 @@ dropping messages loses customer confirmations.
 - The queue sets `x-dead-letter-exchange: notification.dlx` and an explicit
   `x-dead-letter-routing-key: notification.claim-submitted.dlq`, which is also the DLQ's
   binding key, so dead-lettering doesn't depend on the producer's routing keys.
-- Replay: in the management UI, use "Get messages" on the DLQ and publish the payload to
-  `claims.events` with routing key `claim.submitted` and the same `message_id`. The
-  idempotent consumer (ADR 0003) makes an accidental double replay harmless. Moving messages
-  in bulk needs the shovel plugin, which isn't enabled.
+- Replay: once the cause is fixed, in the management UI:
+  1. Open the queue `notification.claim-submitted.dlq` → **Get messages**. Leave the ack mode on
+     "Nack message requeue true" so the message stays in the queue, and copy the payload.
+  2. Open the exchange `claims.events` → **Publish message**. Routing key `claim.submitted`,
+     the payload unchanged, and (optional) the property `message_id` set to the event's ID.
+  3. Back on the DLQ, **Get messages** again with ack mode "Automatic ack" to remove the old copy.
+
+  The body has to stay as it was: the consumer de-duplicates on the `eventId` inside it, not on
+  `message_id`, so a double replay is harmless (ADR 0003) and a replay of an event that already
+  produced an email sends nothing. A failed event is never recorded as processed (its
+  transaction rolled back), so the replay is handled like a new event. The replayed message
+  has none of the original headers, including `traceparent`, so it starts a new trace. Moving
+  messages in bulk needs the shovel plugin, which isn't enabled.
 
 ## Alternatives considered
 - **Delayed retry queues** (per-delay queues with a TTL that dead-letter back to the main
@@ -48,7 +57,9 @@ dropping messages loses customer confirmations.
 - **A retry table in the database:** duplicates what the broker already does.
 
 ## Consequences
-- Retrying in the listener holds that consumer thread for up to ~7 s. That's acceptable with
-  a few concurrent consumers and low volume.
+- Retrying in the listener holds that consumer thread for the back-off waits (1 + 2 + 4 = 7 s)
+  plus the time each attempt takes. A hung SMTP server adds up to its 5 s timeouts per attempt,
+  so a dead-lettered message can take about 30 s in all. That's acceptable with a few
+  concurrent consumers and low volume.
 - No message is silently lost: it's either processed or sitting in the DLQ.
 - In production the DLQ needs alerting and a runbook for replay.
