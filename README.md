@@ -145,8 +145,8 @@ To build without Compose: `./mvnw package` in each Java project and `npm run bui
 ## Demo script
 
 About ten minutes. Start with the stack running and healthy (`docker compose up -d --wait`).
-Steps 1–6 are the happy path; 7 and 8 show what happens when things break. I ran every step
-against the stack while writing this.
+Steps 1–6 are the happy path; 7 and 8 show what happens when things break. Every step has been
+run against the stack.
 
 The two sample requests in [`docs/demo/`](docs/demo) are for `curl`. On Windows PowerShell use
 `curl.exe` (plain `curl` is an alias for something else). The sample claim's loss date must be
@@ -401,8 +401,8 @@ real environment):
 - **Idempotency on submission.** The button disables while sending, but a retried or double
   `POST` creates two claims. An `Idempotency-Key` header would fix that.
 - **Outbox housekeeping:** a scheduled purge of published rows; CDC (for example Debezium) instead
-  of polling at higher volume. I tested the relay's `SKIP LOCKED` locking only on a single
-  instance, not with several instances running together.
+  of polling at higher volume. The relay's `SKIP LOCKED` locking has only been tested with a
+  single instance, not with several instances running together.
 - **Retry and DLQ operations:** per-delay retry queues instead of retrying in the listener; an alert on
   DLQ depth and on `outbox.pending`; a runbook and a tool for bulk replay (the shovel plugin).
 - **Email:** a real provider with a per-message idempotency key (this closes the one duplicate-email
@@ -456,21 +456,33 @@ claims-portal/
 
 ## AI-assisted development
 
-I built this with Claude Code (Anthropic) in the Claude desktop app. I used Claude Opus 5.5 for
-planning and for the design-heavy milestones (the outbox, the idempotent consumer, retries and
-the dead-letter queue, and tracing), and Claude Sonnet 5.5 for the UI, the containers, CI and the
-documentation.
+I built this with Claude Code (Anthropic) in the Claude desktop app, and Claude wrote most of
+the code. It used Claude Opus 5.5 for the plan, the API core and the design-heavy milestones (the
+outbox, the idempotent consumer, retries and the dead-letter queue, and tracing), and Claude
+Sonnet 5.5 for the UI, the containers, CI and the documentation. Each commit's `Co-Authored-By`
+line records which.
 
-I planned the work up front in [docs/PLAN.md](docs/PLAN.md) and the [ADRs](docs/adr/README.md),
-then built it one milestone per session, with one commit per milestone (see `git log`).
+**How the work was done.** I set the goals and constraints; Claude drafted the plan in
+[docs/PLAN.md](docs/PLAN.md) and the [ADRs](docs/adr/README.md), and I read and approved them
+before any code was written. It then built one milestone per session, one commit per milestone
+(see `git log`). During the build I judged each milestone by its results rather than reading
+every line: the automated tests, the CI pipeline, and running the stack (the form-to-email flow,
+plus the broker-down and dead-letter checks in demo steps 7 and 8).
 
-Each milestone was validated three ways: automated tests; live
-runs against the Compose stack (the form-to-email flow, plus broker-down and DLQ checks like demo
-steps 7 and 8); and the CI pipeline. Dependabot opened major-version upgrade PRs; I reviewed and
-rejected them, and the Postgres 18 one failed CI. I then told Dependabot to ignore major versions.
+**How I came to understand it.** After the build I went through the code myself: reading it with
+Claude explaining what each part does and why, stepping through a submission and both services
+in the Eclipse debugger, and running the test suites and the demo script. A final review pass,
+also AI-assisted, checked the documentation against the code and the libraries it uses, and
+corrected four things (commits `80b51e5` to `ad476a5`). One was a wrong claim about what Spring
+AMQP logs: a reminder that AI-written explanations need checking as much as AI-written code.
+
+**What I'd do differently:** read each milestone's code before starting the next one, instead
+of relying on tests and live runs alone until the end.
+
+Dependabot's first run opened major-version upgrade PRs (Node 25, TypeScript 7, Postgres 18;
+the Postgres one failed the end-to-end tests). Rather than take major upgrades from a bot,
+Dependabot is now set to ignore them, which closed those PRs.
 
 For secrets: none are committed, `.env` is git-ignored, and the measures are listed under
 [Configuration and secrets](#configuration-and-secrets) and
 [Security and customer data](#security-and-customer-data).
-
-<!-- TODO(Dane): confirm/edit: how I personally reviewed and understood the code. Replace this comment with 2-4 sentences in your own words: what you read and reviewed yourself, which parts you can explain from memory (for example the outbox and the idempotent consumer), what you changed or rejected from Claude's suggestions, and anything you'd do differently. Don't claim more than is true; the reviewers will ask. -->

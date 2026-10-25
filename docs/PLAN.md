@@ -548,13 +548,14 @@ The end-to-end test is the automated version of the interview demo.
 - Maven/npm caching; runs on pushes and PRs; read-only token, superseded runs are cancelled.
 - Dependabot: weekly, minor and patch updates grouped per ecosystem (Maven, npm, Docker,
   Compose, Actions). Major versions are ignored for everything except GitHub Actions: they
-  need a deliberate upgrade, not a bot PR. (The first round of major-version PRs was reviewed and
-  rejected; the Postgres 18 one failed CI, and that image also changes the data directory layout.)
+  need a deliberate upgrade, not a bot PR. (The first round of major-version PRs was closed by this
+  rule. The Postgres 18 one had failed CI, and that image also changes the data directory layout.)
 - *(stretch)* build and push images to GHCR on the default branch.
 
 ## 12. Milestones
 
-Each one ends green and committed; I review each commit before the next one starts.
+Each one ends green and committed, checked by its tests, CI and a live run of the stack before
+the next one starts.
 
 | # | Milestone | Done when |
 |---|---|---|
