@@ -148,9 +148,11 @@ About ten minutes. Start with the stack running and healthy (`docker compose up 
 Steps 1–6 are the happy path; 7 and 8 show what happens when things break. Every step has been
 run against the stack.
 
-The two sample requests in [`docs/demo/`](docs/demo) are for `curl`. On Windows PowerShell use
-`curl.exe` (plain `curl` is an alias for something else). The sample claim's loss date must be
-within the last 365 days, so edit it if you run this much later than October 2026.
+The two sample requests in [`docs/demo/`](docs/demo) are for `curl`. Each command block below
+also gives the Windows PowerShell version, which differs in three ways: `curl.exe` instead of
+`curl` (plain `curl` is an alias for `Invoke-WebRequest`), quotes around `'@file'` (a bare `@`
+means something else to PowerShell), and `Select-String` instead of `grep`. The sample claim's loss
+date must be within the last 365 days, so edit it if you run this much later than October 2026.
 
 **1. Validation errors.** Open http://localhost:3000 and press **Submit claim** on the empty
 form. An error summary ("There is a problem") takes focus and lists every missing field, each a
@@ -159,6 +161,9 @@ field and its error clears. The server validates too, and is the authority:
 
 ```bash
 curl -i -X POST http://localhost:3000/api/v1/claims -H "Content-Type: application/json" -d @docs/demo/invalid-claim.json
+
+# PowerShell:
+curl.exe -i -X POST http://localhost:3000/api/v1/claims -H "Content-Type: application/json" -d '@docs/demo/invalid-claim.json'
 ```
 
 This returns `400` with an RFC 9457 problem body and an `errors` array of `{field, message}`,
@@ -186,6 +191,9 @@ header:
 
 ```bash
 curl -i -X POST http://localhost:3000/api/v1/claims -H "Content-Type: application/json" -d @docs/demo/valid-claim.json
+
+# PowerShell:
+curl.exe -i -X POST http://localhost:3000/api/v1/claims -H "Content-Type: application/json" -d '@docs/demo/valid-claim.json'
 ```
 
 Copy the `X-Trace-Id` value. (The form's request has the same header in the browser's network
@@ -199,9 +207,11 @@ Now find the same ID in both services' logs:
 
 ```bash
 docker compose logs --no-log-prefix claims-api notification-service | grep <trace id>
+
+# PowerShell:
+docker compose logs --no-log-prefix claims-api notification-service | Select-String <trace id>
 ```
 
-(PowerShell: `docker compose logs --no-log-prefix claims-api notification-service | Select-String <trace id>`.)
 Each service writes JSON (Elastic Common Schema) with `traceId` and `spanId`, so you will see
 lines from claims-api (the claim saved, the event published) and from notification-service (the
 email sent) with one ID. None of them contains a name or email address.
@@ -219,6 +229,9 @@ relay's warnings:
 ```bash
 curl -s http://localhost:8080/actuator/prometheus | grep ^outbox_pending     # 1.0 (the unpublished event)
 docker compose logs --tail 5 claims-api                                      # "Could not publish outbox event ... (failed attempts: N)"
+
+# PowerShell (first line):
+curl.exe -s http://localhost:8080/actuator/prometheus | Select-String '^outbox_pending'
 ```
 
 Mailpit has no new email. Now bring the broker back:
