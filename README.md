@@ -106,7 +106,9 @@ Docker must be running for them too. The end-to-end tests also need Chromium, in
 Playwright (see below).
 
 The commands in this README are for a Unix-style shell (Git Bash works on Windows). Where
-PowerShell differs, it says so.
+PowerShell differs, it says so. If PowerShell refuses to run `npm` or `npx` ("running scripts is
+disabled on this system"), its execution policy is blocking Node's `.ps1` wrappers: type
+`npm.cmd` and `npx.cmd` instead, which aren't affected.
 
 ## Quick start
 
@@ -284,7 +286,7 @@ Replaying twice is harmless: the consumer ignores an event ID it has already han
 | End to end | see below | Node 24+, Docker, the stack running | 5 |
 
 `npm run typecheck` and `npm run lint` (oxlint) in `claims-web` are part of CI too. On Windows,
-use `mvnw.cmd` for `./mvnw`. The Java suites start Postgres, RabbitMQ and Mailpit containers
+use `mvnw.cmd` for `./mvnw` (and, in PowerShell, `npm.cmd` for `npm` if scripts are blocked). The Java suites start Postgres, RabbitMQ and Mailpit containers
 themselves, so the first run pulls those images; the Compose stack doesn't need to be running.
 
 | Level | Where | What it proves, and the most important cases |
@@ -307,6 +309,12 @@ npm ci
 npx playwright install chromium       # first time only (add --with-deps on a fresh Linux machine)
 npm test
 npm run report                        # HTML report with traces and screenshots of failures
+
+# PowerShell, if it blocks npm scripts: the same commands with npm.cmd and npx.cmd
+npm.cmd ci
+npx.cmd playwright install chromium
+npm.cmd test
+npm.cmd run report
 ```
 
 It expects the form at http://localhost:3000 and Mailpit at http://localhost:8025 (override with
