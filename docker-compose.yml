@@ -40,7 +40,7 @@ services:
       retries: 20
 
   rabbitmq:
-    image: rabbitmq:4.3-management-alpine
+    image: rabbitmq:4.4-management-alpine
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?set in .env (see .env.example)}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?set in .env (see .env.example)}
@@ -56,7 +56,7 @@ services:
       retries: 12
 
   mailpit:
-    image: axllent/mailpit:v1.31
+    image: axllent/mailpit:v1.33
     environment:
       MP_SMTP_AUTH_ACCEPT_ANY: "true"
       MP_SMTP_AUTH_ALLOW_INSECURE: "true"
@@ -72,7 +72,7 @@ services:
   # Trace viewer (Jaeger v2 all-in-one: OTLP receiver, in-memory storage and the UI). Only
   # used for looking at traces; the apps work without it (spans that can't be sent are dropped).
   jaeger:
-    image: jaegertracing/jaeger:2.22.0
+    image: jaegertracing/jaeger:2.23.0
     ports:
       - "16686:16686"   # web UI; the apps send spans to port 4318 (OTLP over HTTP) on the compose network
     healthcheck:
